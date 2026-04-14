@@ -1,0 +1,190 @@
+---
+title: "moss-tts-nano CLI command reference"
+description: "Complete reference for the moss-tts-nano CLI — the generate subcommand for offline synthesis and the serve subcommand for launching the HTTP demo server."
+---
+
+The `moss-tts-nano` CLI exposes two subcommands: `generate` runs a single offline synthesis job and writes a WAV file, while `serve` starts a FastAPI web server with a browser demo UI and HTTP generation endpoints. Both subcommands are installed when you run `pip install -e .` from the repository root.
+
+## Usage examples
+
+```bash
+# Voice clone from a reference audio file
+moss-tts-nano generate \
+  --prompt-speech assets/audio/zh_1.wav \
+  --text "欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。"
+
+# Generate from a text file
+moss-tts-nano generate \
+  --prompt-speech assets/audio/en_2.wav \
+  --text-file script.txt \
+  --output output/speech.wav
+
+# Start the web demo server
+moss-tts-nano serve
+
+# Serve on a custom host and port
+moss-tts-nano serve --host 0.0.0.0 --port 8080
+```
+
+---
+
+## moss-tts-nano generate
+
+Synthesize speech from text and write the result to a WAV file. Exactly one of `--text` or `--text-file` must be provided.
+
+### Model and paths
+
+<ParamField path="--checkpoint" type="string" default="OpenMOSS-Team/MOSS-TTS-Nano">
+  MOSS-TTS-Nano checkpoint source. Accepts a Hugging Face repo ID or a local directory path loadable by `from_pretrained()`.
+</ParamField>
+
+<ParamField path="--audio-tokenizer" type="string" default="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano">
+  MOSS-Audio-Tokenizer-Nano source. Accepts a Hugging Face repo ID or a local directory path. Also accepts `--audio_tokenizer` (underscore alias).
+</ParamField>
+
+<ParamField path="--output" type="string" default="generated_audio/moss_tts_nano_output.wav">
+  Output WAV file path. Also accepts `--output-audio-path`.
+</ParamField>
+
+### Input text
+
+Exactly one of the following two flags is required.
+
+<ParamField path="--text" type="string" required>
+  Text to synthesize, provided directly as a string. Mutually exclusive with `--text-file`.
+</ParamField>
+
+<ParamField path="--text-file" type="string" required>
+  Path to a UTF-8 text file to synthesize. Mutually exclusive with `--text`.
+</ParamField>
+
+### Inference mode
+
+<ParamField path="--mode" type="string" default="voice_clone">
+  Inference mode. Accepted values: `voice_clone`, `continuation`.
+
+  - `voice_clone` — clone the voice from `--prompt-speech` and speak the target text.
+  - `continuation` — continue from an optional prompt transcript and audio.
+</ParamField>
+
+<ParamField path="--prompt-speech" type="string">
+  Path to a reference audio file used for voice cloning. Also accepts `--prompt_speech` and `--prompt-audio-path`. Required when `--mode voice_clone`.
+</ParamField>
+
+<ParamField path="--prompt-text" type="string">
+  Reference transcript used by continuation mode. Provide the transcript of the prompt audio when using `--mode continuation`.
+</ParamField>
+
+### Device and precision
+
+<ParamField path="--device" type="string" default="auto">
+  Execution device. Accepts `auto` (selects CUDA if available, otherwise CPU), `cpu`, `cuda`, or `cuda:0` style identifiers.
+</ParamField>
+
+<ParamField path="--dtype" type="string" default="auto">
+  Model weights dtype. Accepted values: `auto`, `float32`, `float16`, `bfloat16`. `auto` picks `bfloat16` on CUDA when supported, `float16` otherwise, and `float32` on CPU.
+</ParamField>
+
+### Generation parameters
+
+<ParamField path="--max-new-frames" type="integer" default="375">
+  Maximum number of audio frames to generate. At 12.5 Hz, 375 frames ≈ 30 seconds of audio. Increase for longer outputs.
+</ParamField>
+
+<ParamField path="--voice-clone-max-text-tokens" type="integer" default="75">
+  Target token budget for sentence chunking in voice clone mode. Controls the maximum number of text tokens per chunk. Set to `0` or below to disable chunking and use single-pass generation.
+</ParamField>
+
+<ParamField path="--text-temperature" type="float" default="1.0">
+  Sampling temperature for the text layer. Higher values produce more varied output; lower values are more deterministic.
+</ParamField>
+
+<ParamField path="--text-top-p" type="float" default="1.0">
+  Nucleus sampling threshold for the text layer. Only tokens whose cumulative probability reaches this value are considered.
+</ParamField>
+
+<ParamField path="--text-top-k" type="integer" default="50">
+  Top-k limit for the text layer. Only the top-k tokens by probability are considered at each step.
+</ParamField>
+
+<ParamField path="--audio-temperature" type="float" default="0.8">
+  Sampling temperature for the audio token layer.
+</ParamField>
+
+<ParamField path="--audio-top-p" type="float" default="0.95">
+  Nucleus sampling threshold for the audio token layer.
+</ParamField>
+
+<ParamField path="--audio-top-k" type="integer" default="25">
+  Top-k limit for the audio token layer.
+</ParamField>
+
+<ParamField path="--audio-repetition-penalty" type="float" default="1.2">
+  Repetition penalty applied to previously generated audio tokens. Values above `1.0` discourage repetition; `1.0` applies no penalty.
+</ParamField>
+
+<ParamField path="--seed" type="integer">
+  Optional random seed for reproducible sampling. When omitted, sampling is non-deterministic.
+</ParamField>
+
+### Text normalization
+
+<ParamField path="--enable-wetext-processing" type="boolean">
+  Flag. When set, enables WeTextProcessing text normalization before inference. Useful for Chinese text with numbers, abbreviations, and special characters.
+</ParamField>
+
+<ParamField path="--print-voice-clone-text-chunks" type="boolean">
+  Flag. When set, prints the effective sentence chunks resolved for voice clone mode before generation starts. Useful for debugging chunking behavior.
+</ParamField>
+
+---
+
+## moss-tts-nano serve
+
+Launch the FastAPI web demo server. The server keeps the model loaded in memory and exposes a browser-accessible demo UI at `http://<host>:<port>` together with HTTP generation endpoints.
+
+<Note>
+  The serve command forwards directly to `app.py`. The `--device` flag accepted here is currently locked to `cpu` by the app — the model runs on CPU regardless of the value passed.
+</Note>
+
+### Model and paths
+
+<ParamField path="--checkpoint" type="string" default="OpenMOSS-Team/MOSS-TTS-Nano">
+  MOSS-TTS-Nano checkpoint source. Accepts a Hugging Face repo ID or a local directory path.
+</ParamField>
+
+<ParamField path="--audio-tokenizer" type="string" default="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano">
+  MOSS-Audio-Tokenizer-Nano source. Accepts a Hugging Face repo ID or a local directory path.
+</ParamField>
+
+<ParamField path="--output-dir" type="string" default="generated_audio">
+  Directory where generated WAV files are written. Created automatically if it does not exist.
+</ParamField>
+
+### Device and precision
+
+<ParamField path="--device" type="string" default="auto">
+  Execution device hint. Note: the web app forces CPU execution regardless of this value.
+</ParamField>
+
+<ParamField path="--dtype" type="string" default="auto">
+  Model weights dtype. Accepted values: `auto`, `float32`, `float16`, `bfloat16`.
+</ParamField>
+
+<ParamField path="--attn-implementation" type="string" default="auto">
+  Attention backend override. Accepted values: `auto`, `sdpa`, `eager`. Note: `flash_attention_2` is not a valid choice for the serve command (the server always runs on CPU). `auto` resolves to `sdpa` on CPU.
+</ParamField>
+
+### Server
+
+<ParamField path="--host" type="string" default="localhost">
+  Host interface to bind. Use `0.0.0.0` to expose the server on all network interfaces.
+</ParamField>
+
+<ParamField path="--port" type="integer" default="18083">
+  TCP port for the HTTP server.
+</ParamField>
+
+<ParamField path="--share" type="boolean">
+  Flag. Accepted for compatibility but has no effect — the FastAPI-based server does not support Gradio-style public sharing.
+</ParamField>

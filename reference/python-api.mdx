@@ -1,0 +1,483 @@
+---
+title: "NanoTTSService Python API reference"
+description: "Full API reference for NanoTTSService — constructor, synthesize, synthesize_stream, preload, warmup, and voice helper methods with all parameter types."
+---
+
+`NanoTTSService` is the primary Python interface to MOSS-TTS-Nano. It manages model loading, audio tokenizer loading, voice presets, and synthesis. All public methods are thread-safe via an internal `threading.RLock`. Import it from `moss_tts_nano_runtime`:
+
+```python
+from moss_tts_nano_runtime import NanoTTSService, VoicePreset
+```
+
+---
+
+## VoicePreset
+
+A frozen dataclass representing a named voice preset.
+
+```python
+from moss_tts_nano_runtime import VoicePreset
+from pathlib import Path
+
+preset = VoicePreset(
+    name="Ava",
+    prompt_audio_path=Path("assets/audio/en_2.wav"),
+    description="English female voice A",
+)
+```
+
+<ResponseField name="name" type="str" required>
+  Unique voice name used to look up this preset.
+</ResponseField>
+
+<ResponseField name="prompt_audio_path" type="Path" required>
+  Absolute path to the reference audio file for this voice.
+</ResponseField>
+
+<ResponseField name="description" type="str" required>
+  Human-readable description of the voice.
+</ResponseField>
+
+---
+
+## NanoTTSService
+
+### Constructor
+
+```python
+service = NanoTTSService(
+    checkpoint_path="OpenMOSS-Team/MOSS-TTS-Nano",
+    audio_tokenizer_path="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano",
+    device="auto",
+    dtype="auto",
+    attn_implementation="auto",
+    output_dir="generated_audio",
+    voice_presets=None,
+)
+```
+
+All constructor parameters are keyword-only.
+
+<ParamField path="checkpoint_path" type="str | Path" default="OpenMOSS-Team/MOSS-TTS-Nano">
+  MOSS-TTS-Nano checkpoint. Accepts a Hugging Face repo ID or a local directory path. Local paths are resolved and validated at load time.
+</ParamField>
+
+<ParamField path="audio_tokenizer_path" type="str | Path" default="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano">
+  MOSS-Audio-Tokenizer-Nano checkpoint. Accepts a Hugging Face repo ID or a local directory path.
+</ParamField>
+
+<ParamField path="device" type="str" default="auto">
+  Target device. `"auto"` selects CUDA if available, otherwise CPU. Accepts any `torch.device`-compatible string such as `"cpu"`, `"cuda"`, or `"cuda:0"`.
+</ParamField>
+
+<ParamField path="dtype" type="str" default="auto">
+  Model weights dtype. Accepted values: `"auto"`, `"float32"`, `"float16"`, `"bfloat16"`. `"auto"` picks `bfloat16` on CUDA when supported, `float16` otherwise, and `float32` on CPU.
+</ParamField>
+
+<ParamField path="attn_implementation" type="str" default="auto">
+  Attention backend. Accepted values: `"auto"`, `"sdpa"`, `"flash_attention_2"`, `"eager"`. `"auto"` resolves to `flash_attention_2` when CUDA, `flash_attn`, and fp16/bf16 are all available; otherwise falls back to `sdpa`.
+</ParamField>
+
+<ParamField path="output_dir" type="str | Path" default="generated_audio">
+  Directory where synthesized WAV files are written. Created automatically if it does not exist.
+</ParamField>
+
+<ParamField path="voice_presets" type="dict[str, VoicePreset] | None" default="None">
+  Custom voice preset registry. When `None`, the built-in set of 16 voices is used (Chinese, English, and Japanese voices bundled with the repository).
+</ParamField>
+
+---
+
+### synthesize()
+
+Run a single synthesis job synchronously and return when complete.
+
+```python
+result = service.synthesize(
+    text="Hello, world!",
+    voice="Ava",
+    mode="voice_clone",
+)
+print(result["audio_path"])
+print(f"Generated {result['elapsed_seconds']:.2f}s of audio in {result['elapsed_seconds']:.2f}s")
+```
+
+All parameters are keyword-only.
+
+<ParamField path="text" type="str" required>
+  Text to synthesize. Must be a non-empty string after stripping whitespace.
+</ParamField>
+
+<ParamField path="voice" type="str | None" default="None">
+  Name of a voice preset to use for voice cloning. When `None`, the default voice (`"Junhao"`) is used. Ignored when `prompt_audio_path` is provided explicitly.
+</ParamField>
+
+<ParamField path="mode" type="str" default="voice_clone">
+  Inference mode. Accepted values: `"voice_clone"`, `"continuation"`.
+</ParamField>
+
+<ParamField path="output_audio_path" type="str | Path | None" default="None">
+  Path where the output WAV file is written. When `None`, a timestamped filename is generated automatically under `output_dir`.
+</ParamField>
+
+<ParamField path="prompt_audio_path" type="str | Path | None" default="None">
+  Explicit reference audio path. Overrides the voice preset audio when provided in `voice_clone` mode. Required alongside `prompt_text` when using `continuation` mode with a reference audio.
+</ParamField>
+
+<ParamField path="prompt_text" type="str | None" default="None">
+  Reference transcript for continuation mode. Must be supplied when `mode="continuation"` and `prompt_audio_path` is also set.
+</ParamField>
+
+<ParamField path="max_new_frames" type="int" default="375">
+  Maximum number of audio frames to generate. At 12.5 Hz, 375 frames ≈ 30 seconds.
+</ParamField>
+
+<ParamField path="voice_clone_max_text_tokens" type="int" default="75">
+  Target token budget for sentence chunking in voice clone mode. Set to `0` or below to disable chunking.
+</ParamField>
+
+<ParamField path="voice_clone_max_memory_per_sample_gb" type="float" default="1.0">
+  CUDA only. Maximum free-memory budget in gigabytes used to auto-size the chunk batch when chunked voice cloning is active.
+</ParamField>
+
+<ParamField path="tts_max_batch_size" type="int" default="0">
+  Maximum TTS batch size for chunked voice cloning. `0` enables automatic batch sizing.
+</ParamField>
+
+<ParamField path="codec_max_batch_size" type="int" default="0">
+  Maximum codec (audio tokenizer) batch size for decoding. `0` enables automatic batch sizing.
+</ParamField>
+
+<ParamField path="do_sample" type="bool" default="True">
+  Use sampling instead of greedy decoding. Set to `False` for fully deterministic output.
+</ParamField>
+
+<ParamField path="text_temperature" type="float" default="1.0">
+  Sampling temperature for the text token layer.
+</ParamField>
+
+<ParamField path="text_top_p" type="float" default="1.0">
+  Nucleus sampling threshold for the text token layer.
+</ParamField>
+
+<ParamField path="text_top_k" type="int" default="50">
+  Top-k limit for the text token layer.
+</ParamField>
+
+<ParamField path="audio_temperature" type="float" default="0.8">
+  Sampling temperature for the audio token layer.
+</ParamField>
+
+<ParamField path="audio_top_p" type="float" default="0.95">
+  Nucleus sampling threshold for the audio token layer.
+</ParamField>
+
+<ParamField path="audio_top_k" type="int" default="25">
+  Top-k limit for the audio token layer.
+</ParamField>
+
+<ParamField path="audio_repetition_penalty" type="float" default="1.2">
+  Repetition penalty for audio tokens. `1.0` applies no penalty.
+</ParamField>
+
+<ParamField path="nq" type="int | None" default="None">
+  Number of RVQ codebook layers to use for encoding and decoding. `None` uses all 16 layers for maximum quality. Lower values reduce compute at the cost of audio fidelity.
+</ParamField>
+
+<ParamField path="seed" type="int | None" default="None">
+  Random seed for reproducible sampling. `None` uses non-deterministic sampling.
+</ParamField>
+
+<ParamField path="attn_implementation" type="str | None" default="None">
+  Per-request attention backend override. Overrides the service-level `attn_implementation` setting for this call only. Accepted values: `"auto"`, `"sdpa"`, `"flash_attention_2"`, `"eager"`, or `None` (use service default).
+</ParamField>
+
+#### Return value
+
+Returns a `dict[str, object]` with the following keys:
+
+<ResponseField name="audio_path" type="str">
+  Absolute path to the written WAV file.
+</ResponseField>
+
+<ResponseField name="sample_rate" type="int">
+  Sample rate of the generated audio in Hz (typically 48000).
+</ResponseField>
+
+<ResponseField name="waveform" type="torch.Tensor">
+  Generated audio waveform as a CPU float32 tensor.
+</ResponseField>
+
+<ResponseField name="waveform_numpy" type="numpy.ndarray">
+  Generated audio waveform as a float32 NumPy array, shape `(samples, channels)`.
+</ResponseField>
+
+<ResponseField name="audio_token_ids" type="torch.Tensor">
+  Generated RVQ audio token IDs.
+</ResponseField>
+
+<ResponseField name="reference_audio_token_ids" type="torch.Tensor">
+  Audio token IDs encoded from the reference (prompt) audio.
+</ResponseField>
+
+<ResponseField name="elapsed_seconds" type="float">
+  Wall-clock time in seconds from call entry to return.
+</ResponseField>
+
+<ResponseField name="voice" type="str">
+  Resolved voice preset name used for this synthesis.
+</ResponseField>
+
+<ResponseField name="mode" type="str">
+  Normalized inference mode used: `"voice_clone"` or `"continuation"`.
+</ResponseField>
+
+<ResponseField name="prompt_audio_path" type="str | None">
+  Resolved absolute path to the reference audio, or `None` for continuation without audio.
+</ResponseField>
+
+<ResponseField name="requested_attn_implementation" type="str">
+  The attention backend string that was requested for this call.
+</ResponseField>
+
+<ResponseField name="effective_global_attn_implementation" type="str">
+  The attention backend actually applied to the global transformer.
+</ResponseField>
+
+<ResponseField name="effective_local_attn_implementation" type="str">
+  The attention backend actually applied to the local transformer.
+</ResponseField>
+
+<ResponseField name="voice_clone_text_chunks" type="list[str] | None">
+  Sentence chunks used when chunked voice cloning was active, or `None` for single-pass generation.
+</ResponseField>
+
+---
+
+### synthesize_stream()
+
+Run synthesis and yield audio chunks as they are generated. Suitable for low-latency streaming playback.
+
+```python
+for event in service.synthesize_stream(text="Hello, world!", voice="Ava"):
+    if event["type"] == "audio":
+        # Process waveform chunk for playback
+        chunk = event["waveform_numpy"]
+        sample_rate = event["sample_rate"]
+    elif event["type"] == "result":
+        # Final result with the complete audio
+        print(event["audio_path"])
+```
+
+`synthesize_stream()` accepts the same keyword-only parameters as `synthesize()`. It returns an `Iterator[dict[str, object]]` that yields two kinds of events:
+
+#### Audio event (`type == "audio"`)
+
+<ResponseField name="type" type="str">
+  Always `"audio"`.
+</ResponseField>
+
+<ResponseField name="waveform" type="torch.Tensor">
+  Audio chunk as a CPU float32 tensor.
+</ResponseField>
+
+<ResponseField name="waveform_numpy" type="numpy.ndarray">
+  Audio chunk as a float32 NumPy array, shape `(samples, channels)`.
+</ResponseField>
+
+<ResponseField name="sample_rate" type="int">
+  Sample rate of this chunk in Hz.
+</ResponseField>
+
+<ResponseField name="chunk_index" type="int">
+  Index of the voice clone text chunk this audio belongs to (0-based).
+</ResponseField>
+
+<ResponseField name="is_pause" type="bool">
+  `True` if this chunk is a silence pause between text chunks rather than speech.
+</ResponseField>
+
+<ResponseField name="emitted_audio_seconds" type="float">
+  Total seconds of audio emitted so far including this chunk.
+</ResponseField>
+
+<ResponseField name="lead_seconds" type="float">
+  Seconds of audio buffered ahead of the current playback cursor.
+</ResponseField>
+
+#### Result event (`type == "result"`)
+
+The final event contains the same fields as the `synthesize()` return value, plus `type: "result"`.
+
+---
+
+### list_voice_names()
+
+Return the names of all registered voice presets.
+
+```python
+voices = service.list_voice_names()
+# ['Junhao', 'Zhiming', 'Weiguo', 'Xiaoyu', 'Yuewen', 'Lingyu',
+#  'Trump', 'Ava', 'Bella', 'Adam', 'Nathan',
+#  'Sakura', 'Yui', 'Aoi', 'Hina', 'Mei']
+```
+
+**Returns** `list[str]` — voice names in insertion order.
+
+---
+
+### get_voice_preset()
+
+Look up a voice preset by name.
+
+```python
+preset = service.get_voice_preset("Ava")
+print(preset.prompt_audio_path)
+```
+
+<ParamField path="voice_name" type="str | None">
+  Name of the voice preset to look up. When `None` or an unknown name is passed, the default voice is returned.
+</ParamField>
+
+**Returns** `VoicePreset`.
+
+---
+
+### preload()
+
+Load the model and/or verify that voice preset audio files exist. Call this at server startup to avoid first-request latency.
+
+```python
+info = service.preload(voices=["Ava", "Junhao"], load_model=True)
+print(info["device"])
+print(info["loaded_voices"])
+```
+
+<ParamField path="voices" type="list[str] | None" default="None">
+  Voice names to verify. When `None`, only the default voice is checked.
+</ParamField>
+
+<ParamField path="load_model" type="bool" default="True">
+  When `True`, loads the TTS model checkpoint into memory before returning.
+</ParamField>
+
+**Returns** `dict[str, object]` with the following keys:
+
+<ResponseField name="loaded_voices" type="list[str]">
+  Voice names whose prompt audio files were found on disk.
+</ResponseField>
+
+<ResponseField name="device" type="str">
+  Resolved device string (e.g., `"cuda:0"` or `"cpu"`).
+</ResponseField>
+
+<ResponseField name="dtype" type="str">
+  Resolved dtype string (e.g., `"torch.bfloat16"`).
+</ResponseField>
+
+<ResponseField name="attn_implementation" type="str">
+  Configured attention backend, or `"auto"` if not explicitly set.
+</ResponseField>
+
+<ResponseField name="configured_attn_implementation" type="str">
+  Attention backend actually applied to the global transformer after model load.
+</ResponseField>
+
+<ResponseField name="configured_local_attn_implementation" type="str">
+  Attention backend applied to the local transformer.
+</ResponseField>
+
+<ResponseField name="configured_codec_attn_implementation" type="str">
+  Attention backend applied to the audio tokenizer.
+</ResponseField>
+
+---
+
+### warmup()
+
+Run a short synthesis pass to warm up the model, JIT, and KV cache. Returns the same dict as `synthesize()`.
+
+```python
+result = service.warmup(
+    text="你好，欢迎使用 Nano-TTS。",
+    voice=None,  # uses default voice
+)
+print(f"Warmup completed in {result['elapsed_seconds']:.2f}s")
+```
+
+<ParamField path="text" type="str" default="你好，欢迎使用 Nano-TTS。">
+  Short text to use for the warmup synthesis pass.
+</ParamField>
+
+<ParamField path="voice" type="str | None" default="None">
+  Voice to use for the warmup pass. `None` uses the default voice.
+</ParamField>
+
+**Returns** `dict[str, object]` — same structure as `synthesize()`.
+
+---
+
+### split_voice_clone_text()
+
+Split a text string into sentence chunks suitable for chunked voice cloning, using the model's built-in text tokenizer.
+
+```python
+chunks = service.split_voice_clone_text(
+    text="Long input text that should be split into sentences.",
+    voice_clone_max_text_tokens=75,
+)
+```
+
+<ParamField path="text" type="str" required>
+  Input text to split.
+</ParamField>
+
+<ParamField path="voice_clone_max_text_tokens" type="int" default="75">
+  Maximum number of text tokens per chunk.
+</ParamField>
+
+**Returns** `list[str]` — list of sentence chunks. Returns `[text]` (single element) when chunking produces only one chunk or the model does not support chunking.
+
+---
+
+## Complete usage example
+
+```python
+from moss_tts_nano_runtime import NanoTTSService
+
+# Initialize the service
+service = NanoTTSService(
+    checkpoint_path="OpenMOSS-Team/MOSS-TTS-Nano",
+    audio_tokenizer_path="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano",
+    device="auto",
+    dtype="auto",
+)
+
+# Warm up the model on startup
+service.warmup()
+
+# List available voices
+voices = service.list_voice_names()
+print("Available voices:", voices)
+
+# Synthesize with a built-in voice preset
+result = service.synthesize(
+    text="The quick brown fox jumps over the lazy dog.",
+    voice="Ava",
+    mode="voice_clone",
+    seed=42,
+)
+print(f"Saved to: {result['audio_path']}")
+print(f"Duration: {result['waveform_numpy'].shape[0] / result['sample_rate']:.2f}s")
+
+# Streaming synthesis
+for event in service.synthesize_stream(
+    text="Streaming synthesis for low-latency playback.",
+    voice="Nathan",
+):
+    if event["type"] == "audio":
+        # Feed event["waveform_numpy"] to your audio player
+        pass
+    elif event["type"] == "result":
+        print(f"Stream complete: {event['audio_path']}")
+```

@@ -1,0 +1,147 @@
+---
+title: "Generation parameters for MOSS-TTS-Nano"
+description: "Reference for all sampling and decoding parameters in MOSS-TTS-Nano: text-layer controls, audio-layer controls, generation length, RVQ depth, and seed."
+---
+
+MOSS-TTS-Nano uses a two-stage autoregressive pipeline: a text token layer followed by an audio token layer. Each stage has its own independent set of sampling parameters, giving you fine-grained control over the generation behavior at each stage of the pipeline.
+
+---
+
+## Text layer parameters
+
+The text layer converts input characters into text tokens that condition audio generation.
+
+<ParamField path="text_temperature" type="float" default="1.0">
+  Sampling temperature for the text token layer. Higher values (e.g., `1.5`) increase diversity and expressiveness; lower values (e.g., `0.7`) make output more deterministic. At `1.0`, the model's learned distribution is used without modification.
+</ParamField>
+
+<ParamField path="text_top_p" type="float" default="1.0">
+  Nucleus sampling threshold for the text layer. At each step, only the smallest set of tokens whose cumulative probability reaches `text_top_p` are considered. `1.0` disables nucleus filtering (all tokens are candidates). Lower values such as `0.9` restrict sampling to the most likely tokens.
+</ParamField>
+
+<ParamField path="text_top_k" type="integer" default="50">
+  Top-k limit for the text layer. Only the top `text_top_k` tokens by probability are eligible at each step. Reducing this value (e.g., to `20`) concentrates sampling on high-probability options.
+</ParamField>
+
+---
+
+## Audio layer parameters
+
+The audio layer generates RVQ audio tokens from the text token context.
+
+<ParamField path="audio_temperature" type="float" default="0.8">
+  Sampling temperature for the audio token layer. Lower than the text temperature default because audio token sampling benefits from slightly more conservative generation to avoid artifacts. Increase toward `1.2` for more expressive output; decrease toward `0.5` for more stable but potentially monotone output.
+</ParamField>
+
+<ParamField path="audio_top_p" type="float" default="0.95">
+  Nucleus sampling threshold for the audio token layer. At `0.95`, roughly the top 95% of the probability mass is retained. Lowering this (e.g., to `0.85`) focuses generation on the most confident audio tokens.
+</ParamField>
+
+<ParamField path="audio_top_k" type="integer" default="25">
+  Top-k limit for the audio token layer. Tighter than the text layer default, as audio tokens benefit from a smaller candidate pool to reduce noise.
+</ParamField>
+
+<ParamField path="audio_repetition_penalty" type="float" default="1.2">
+  Repetition penalty applied to audio tokens that have already been generated. Values above `1.0` reduce the probability of repeating recent tokens, which helps avoid looping or stuck audio artifacts. `1.0` applies no penalty. Values above `1.5` can over-penalize and distort output.
+</ParamField>
+
+---
+
+## Generation control parameters
+
+<ParamField path="max_new_frames" type="integer" default="375">
+  Maximum number of audio frames to generate. The audio tokenizer runs at 12.5 Hz, so each frame represents 80 ms of audio:
+
+  | `max_new_frames` | Maximum output duration |
+  |---|---|
+  | 125 | ~10 seconds |
+  | 250 | ~20 seconds |
+  | 375 | ~30 seconds |
+  | 500 | ~40 seconds |
+
+  Generation stops at this limit or when the model emits an end-of-sequence token, whichever comes first.
+</ParamField>
+
+<ParamField path="voice_clone_max_text_tokens" type="integer" default="75">
+  Target token budget for automatic sentence chunking in voice clone mode. When input text is longer than this limit, the model's text tokenizer splits the text into sentence chunks and synthesizes them sequentially. This prevents context overflow and keeps each chunk within the model's efficient operating range.
+
+  Set to `0` or below to disable chunking and force single-pass generation regardless of text length.
+</ParamField>
+
+<ParamField path="nq" type="integer | None" default="None">
+  Number of RVQ codebook layers to use for encoding the reference audio and decoding the generated audio. `None` uses all 16 layers for maximum fidelity. Lower values reduce compute at the cost of audio quality:
+
+  | `nq` | Approximate bitrate |
+  |---|---|
+  | `None` (all 16) | 2 kbps |
+  | 8 | 1 kbps |
+  | 4 | 0.5 kbps |
+  | 1 | 0.125 kbps |
+</ParamField>
+
+<ParamField path="do_sample" type="boolean" default="True">
+  When `True`, uses sampling for generation. When `False`, uses greedy decoding (always picks the highest-probability token at each step). Greedy decoding is fully deterministic and generally produces more stable but less natural-sounding output.
+</ParamField>
+
+<ParamField path="seed" type="integer | None" default="None">
+  Random seed for reproducible output. When set, both `torch.manual_seed` and `torch.cuda.manual_seed_all` are called before generation. `None` uses non-deterministic sampling.
+</ParamField>
+
+---
+
+## Recommended starting points
+
+<Tip>
+  For everyday voice cloning, the defaults work well for most inputs. Start there and adjust one parameter at a time.
+
+  **For more expressive or varied output:** Increase `audio_temperature` to `1.0`–`1.1` and lower `audio_top_k` to `20`.
+
+  **For maximum stability (e.g., audiobooks, narration):** Lower `audio_temperature` to `0.6`–`0.7`, set `audio_repetition_penalty` to `1.1`–`1.2`, and use `seed=42` for reproducibility.
+
+  **For faster CPU inference:** Lower `max_new_frames` to match the expected output length, and consider setting `nq=8` to halve codec compute.
+</Tip>
+
+---
+
+## Frequently asked questions
+
+<AccordionGroup>
+  <Accordion title="Why does the audio sound robotic or looping?">
+    Repetitive or robotic audio is usually caused by one of the following:
+
+    - **`audio_repetition_penalty` too low** — increase from `1.2` toward `1.3`–`1.4` to penalize repeated audio tokens more strongly.
+    - **`audio_temperature` too low** — values below `0.5` can cause the model to collapse to repetitive patterns. Try `0.8` (the default).
+    - **Text is too long without chunking** — if `voice_clone_max_text_tokens` is set to `0`, very long inputs may degrade quality. Re-enable chunking by keeping the default of `75`.
+  </Accordion>
+
+  <Accordion title="How do I control output length?">
+    Output length is controlled by `max_new_frames`. The audio tokenizer runs at 12.5 Hz, so:
+
+    ```
+    duration_seconds ≈ max_new_frames / 12.5
+    ```
+
+    For example, to cap output at 20 seconds, set `max_new_frames=250`. Generation also stops early if the model emits an end-of-sequence token before the limit is reached, so you can set a generous upper bound without it always generating that much audio.
+  </Accordion>
+
+  <Accordion title="How do I get exactly the same output every time?">
+    Set `seed` to a fixed integer and `do_sample=True` (sampling with a fixed seed). The seed initializes both the CPU and CUDA random number generators before generation, so as long as hardware, model weights, and all parameters stay the same, output will be identical.
+
+    Note that switching between `sdpa` and `flash_attention_2` attention backends may produce numerically different results even with the same seed, due to different floating-point operation ordering.
+  </Accordion>
+
+  <Accordion title="What does voice_clone_max_text_tokens do exactly?">
+    In voice clone mode, the model clones a reference speaker's voice while reading the target text. For long inputs, the model tokenizes the text and splits it into chunks of at most `voice_clone_max_text_tokens` tokens per chunk, then synthesizes each chunk independently with the same reference audio. The chunks are concatenated to produce the final output.
+
+    Smaller values produce shorter chunks (better individual quality, more synthesis passes). Larger values produce longer chunks (fewer passes, but may degrade at the boundaries of the model's context window). The default of `75` is a good balance for most text lengths.
+  </Accordion>
+
+  <Accordion title="What is the difference between text_temperature and audio_temperature?">
+    MOSS-TTS-Nano has two separate autoregressive stages:
+
+    1. **Text layer** — generates internal text token representations from the input string. `text_temperature`, `text_top_p`, and `text_top_k` control this stage.
+    2. **Audio layer** — generates RVQ audio tokens from the text token context. `audio_temperature`, `audio_top_p`, `audio_top_k`, and `audio_repetition_penalty` control this stage.
+
+    Because the audio layer is more sensitive to sampling noise, the audio defaults (`temperature=0.8`, `top_p=0.95`, `top_k=25`) are more conservative than the text layer defaults (`temperature=1.0`, `top_p=1.0`, `top_k=50`).
+  </Accordion>
+</AccordionGroup>

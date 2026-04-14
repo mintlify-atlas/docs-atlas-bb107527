@@ -1,0 +1,92 @@
+---
+title: "MOSS-TTS-Nano architecture and inference pipeline"
+description: "How MOSS-TTS-Nano combines a 20M-parameter causal audio tokenizer with a 0.1B LLM for pure autoregressive, streaming-capable speech synthesis."
+---
+
+MOSS-TTS-Nano uses a pure autoregressive **Audio Tokenizer + LLM** pipeline. There is no separate acoustic model or vocoder stage: the language model generates discrete audio tokens directly, and the codec decodes those tokens back to a waveform in a single pass. This design keeps the deployment stack simple and makes streaming inference straightforward.
+
+## Components
+
+### MOSS-Audio-Tokenizer-Nano
+
+MOSS-Audio-Tokenizer-Nano is the audio backbone shared across the MOSS-TTS product family. Key properties:
+
+- **~20M parameters**
+- **Cat architecture** — Causal Audio Tokenizer with Transformer blocks; entirely CNN-free
+- **48 kHz stereo** input and output, which reduces compression loss and improves listening quality
+- **12.5 Hz token stream** — 48 kHz stereo audio compressed to 12.5 tokens per second
+- **RVQ with 16 codebooks** — Residual Vector Quantization enabling variable-bitrate reconstruction
+- **0.125–2 kbps** bitrate range for high-fidelity audio at low bitrates
+
+The tokenizer serves as the shared audio representation for MOSS-TTS, MOSS-TTS-Nano, MOSS-TTSD, MOSS-VoiceGenerator, MOSS-SoundEffect, and MOSS-TTS-Realtime.
+
+### TTS language model
+
+The TTS LLM has **0.1B parameters** and is loaded via `AutoModelForCausalLM`. It includes:
+
+- A global Transformer for long-range context
+- A local Transformer for fine-grained token dependencies
+- A built-in text tokenizer loaded from the same checkpoint directory
+- KV-cache enabled for all inference modes
+
+## Inference pipeline
+
+<Steps>
+  <Step title="Text input and normalization">
+    Input text is optionally normalized using the text normalization pipeline (WeTextProcessing for Chinese and English). For voice clone mode, long inputs are split into sentence-level chunks using the model's built-in text tokenizer, keeping each chunk within the `voice_clone_max_text_tokens` budget (default: 75 tokens).
+  </Step>
+  <Step title="Prompt audio encoding">
+    In `voice_clone` mode, a reference audio file is passed to the audio tokenizer, which encodes it into a sequence of discrete RVQ tokens. These tokens serve as the conditioning context for the LLM. In `continuation` mode, the reference audio and its transcript are both used as the prompt.
+  </Step>
+  <Step title="LLM autoregressive decode">
+    The TTS LLM receives the encoded prompt tokens and the input text, then autoregressively generates audio tokens. Sampling parameters (temperature, top-p, top-k, repetition penalty) are applied to both the text and audio token streams independently.
+  </Step>
+  <Step title="Audio token decode">
+    The generated audio token IDs are passed to MOSS-Audio-Tokenizer-Nano for decoding. The tokenizer reconstructs the 48 kHz stereo waveform from the RVQ codebook entries.
+  </Step>
+  <Step title="Waveform output">
+    The decoded waveform is written to a `.wav` file. In streaming mode, partial waveform chunks are emitted as they are decoded so playback can begin before synthesis is complete.
+  </Step>
+</Steps>
+
+## Inference modes
+
+The runtime supports two modes, set via the `mode` parameter:
+
+| Mode | Description |
+|---|---|
+| `voice_clone` | Clones the speaker identity from a reference audio file. This is the recommended mode for most use cases. |
+| `continuation` | Continues speech from a reference audio clip. Requires both `prompt_audio_path` and `prompt_text`. |
+
+## Streaming inference
+
+Streaming is handled by `model.inference_stream`, which yields `audio` events as each chunk is decoded, followed by a final `result` event.
+
+On CUDA devices, the runtime installs a **streaming budget patch** that adjusts the number of frames decoded per chunk based on the current audio lead time:
+
+```python
+# Approximate decode frame budget logic
+if first_audio_emitted_at is None or lead_seconds < 0.20:
+    return 4   # ~320 ms audio per chunk
+if lead_seconds < 0.55:
+    return 6
+if lead_seconds < 1.10:
+    return 8
+return 12
+```
+
+This adaptive policy prevents CUDA realtime decode from emitting too many tiny chunks that would underrun browser playback at this checkpoint size.
+
+## Attention implementation
+
+The runtime selects the attention backend automatically:
+
+- **`flash_attention_2`** — used on CUDA when `flash_attn` is installed and dtype is fp16/bf16
+- **`sdpa`** — default on both CPU and CUDA (when Flash Attention is not available); also always used for the audio tokenizer
+- **`eager`** — explicit override only; the slowest option, useful only for debugging
+
+You can override this per-request by passing `attn_implementation` to `synthesize` or `synthesize_stream`.
+
+<Tip>
+  For CPU-only inference, the runtime automatically uses `float32` and `sdpa` attention. No configuration changes are needed to switch from GPU to CPU.
+</Tip>

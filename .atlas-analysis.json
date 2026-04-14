@@ -1,0 +1,80 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "MOSS-TTS-Nano",
+  "projectDescription": "An open-source multilingual tiny text-to-speech model with 0.1B parameters designed for real-time streaming speech generation on CPU, supporting voice cloning across 20 languages.",
+  "theme": "luma",
+  "primaryColor": "#5daef2",
+  "lightColor": "#88e2fc",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "architecture",
+              "supported-languages"
+            ]
+          },
+          {
+            "group": "Get Started",
+            "pages": [
+              "quickstart",
+              "installation",
+              "local-web-demo"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/voice-cloning",
+              "guides/text-normalization",
+              "guides/long-form-synthesis",
+              "guides/deployment"
+            ]
+          },
+          {
+            "group": "Model Reference",
+            "pages": [
+              "reference/cli",
+              "reference/python-api",
+              "reference/http-api",
+              "reference/audio-tokenizer",
+              "reference/generation-parameters"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "0.1B parameter model for real-time TTS inference",
+    "Runs on CPU without requiring a GPU",
+    "Voice cloning from a short reference audio clip",
+    "Streaming inference with low first-audio latency",
+    "20 languages supported including Chinese, English, Japanese, and more",
+    "48 kHz stereo audio output",
+    "Pure autoregressive Audio Tokenizer + LLM pipeline",
+    "CLI, Python API, and FastAPI web server interfaces",
+    "Long-text support with automatic chunked voice cloning",
+    "MOSS-Audio-Tokenizer-Nano with 20M parameter causal Transformer codec"
+  ],
+  "publicApiSurface": [
+    "moss-tts-nano generate",
+    "moss-tts-nano serve",
+    "NanoTTSService.synthesize()",
+    "NanoTTSService.synthesize_stream()",
+    "NanoTTSService.warmup()",
+    "NanoTTSService.list_voice_names()",
+    "NanoTTSService.get_voice_preset()",
+    "NanoTTSService.preload()",
+    "prepare_tts_request_texts()",
+    "WeTextProcessingManager.normalize()",
+    "infer.py main()",
+    "app.py FastAPI /api/generate endpoint",
+    "app.py FastAPI /api/stream endpoint"
+  ]
+}

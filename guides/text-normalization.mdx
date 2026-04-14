@@ -1,0 +1,153 @@
+---
+title: 'Text normalization for MOSS-TTS-Nano'
+description: "Configure MOSS-TTS-Nano text normalization: the built-in robust normalizer and optional WeTextProcessing for Chinese and English semantic expansion."
+---
+
+Raw user input often contains punctuation noise, Markdown formatting, repeated characters, or mixed-script whitespace that a TTS model cannot handle gracefully. MOSS-TTS-Nano ships two complementary normalization systems to clean up text before inference: a lightweight robust normalizer enabled by default, and the optional WeTextProcessing library for deeper semantic normalization of Chinese and English.
+
+## The two normalization systems
+
+### `normalize_tts_text` — robust normalizer (default on)
+
+Implemented in `tts_robust_normalizer_single_script.py` and imported by `text_normalization_pipeline.py`, this normalizer is designed for *robustness* rather than semantic expansion. It does not expand numbers, units, or dates — it focuses on structural cleanup:
+
+- Converts `[brackets]`, `{curly braces}`, `【Japanese brackets】` to double-quoted content.
+- Strips Markdown headings (`#`), blockquotes (`>`), and list prefixes (`-`, `*`, `1.`).
+- Converts `[text](url)` Markdown links to `text url`.
+- Collapses `......` or `……` ellipsis runs to a single `。`.
+- Deduplicates repeated punctuation: `？？？！！！` → `？！`.
+- Handles CJK/Latin mixed-script spacing: removes spaces within CJK runs, preserves or inserts a single space at CJK↔Latin boundaries.
+- Protects URLs, email addresses, `@mentions`, `#hashtags`, filenames, and version strings from being mutated.
+- Ensures every line ends with terminal punctuation.
+
+Enable or disable it with the `--enable-normalize-tts-text` / `--disable-normalize-tts-text` flags. The alias `--enable-robust-text-normalization` / `--disable-robust-text-normalization` also works.
+
+### WeTextProcessing — semantic normalization (optional)
+
+[WeTextProcessing](https://github.com/WhizZest/WeTextProcessing) performs full semantic text normalization: it expands numbers, dates, currency, units, and other written forms into their spoken equivalents. It supports Chinese (`zh`) and English (`en`). Enable it with `--enable-wetext-processing`.
+
+When both systems are active, the robust normalizer runs *before* WeTextProcessing to clean up structural noise, then WeTextProcessing expands semantic forms, then the robust normalizer runs once more as a post-pass to catch any new noise introduced by expansion.
+
+<Warning>
+WeTextProcessing depends on `pynini`, which cannot be installed via pip on some systems. If the pip install in `requirements.txt` fails, install it from conda-forge first:
+
+```bash
+conda install -c conda-forge pynini=2.1.6.post1 -y
+pip install git+https://github.com/WhizZest/WeTextProcessing.git
+```
+</Warning>
+
+## Language auto-detection
+
+`resolve_text_normalization_language()` in `text_normalization_pipeline.py` determines which WeTextProcessing normalizer to apply:
+
+```python
+def resolve_text_normalization_language(*, text: str, voice: str) -> str:
+    if re.search(r"[\u3400-\u9fff]", text):
+        return "zh"
+    if re.search(r"[A-Za-z]", text):
+        return "en"
+    if voice in ENGLISH_VOICES:
+        return "en"
+    return "zh"
+```
+
+Detection order:
+
+1. If the text contains any CJK character (U+3400–U+9FFF) → `zh`.
+2. Else if the text contains any Latin letter → `en`.
+3. Else if the selected voice is one of the English presets (`Trump`, `Ava`, `Bella`, `Adam`, `Nathan`) → `en`.
+4. Default → `zh`.
+
+## CLI flags
+
+```bash
+# Enable WeTextProcessing (semantic normalization for zh/en)
+moss-tts-nano generate --enable-wetext-processing --text "..."
+
+# Explicitly enable the robust normalizer (it is on by default)
+moss-tts-nano generate --enable-normalize-tts-text --text "..."
+
+# Disable the robust normalizer
+moss-tts-nano generate --disable-normalize-tts-text --text "..."
+```
+
+With `infer.py` the `--enable-wetext-processing` flag accepts an optional integer:
+
+```bash
+# Using infer.py directly
+python infer.py --enable-wetext-processing 1 --text "..."
+python infer.py --disable-normalize-tts-text --text "..."
+```
+
+## Python API
+
+Use `prepare_tts_request_texts()` to apply the normalization pipeline programmatically before passing text to inference:
+
+```python
+from text_normalization_pipeline import (
+    WeTextProcessingManager,
+    prepare_tts_request_texts,
+)
+
+# Without WeTextProcessing (robust normalizer only)
+result = prepare_tts_request_texts(
+    text="## 重磅！《新品发布》——现在开始！！！",
+    prompt_text="",
+    voice="Junhao",
+    enable_wetext=False,
+    enable_normalize_tts_text=True,
+    text_normalizer_manager=None,
+)
+print(result["text"])
+# -> '"重磅"《新品发布》。现在开始！'
+print(result["normalization_method"])
+# -> 'robust'
+
+# With WeTextProcessing enabled
+manager = WeTextProcessingManager()
+manager.ensure_ready()  # blocks until normalizers are loaded
+
+result = prepare_tts_request_texts(
+    text="今天是2026年4月14日，气温18度。",
+    prompt_text="",
+    voice="Junhao",
+    enable_wetext=True,
+    enable_normalize_tts_text=True,
+    text_normalizer_manager=manager,
+)
+print(result["text"])
+print(result["text_normalization_language"])  # 'zh'
+print(result["normalization_method"])          # 'robust_pre+wetext:zh+robust_post'
+```
+
+The returned dict includes:
+
+| Key | Description |
+| --- | --- |
+| `text` | Normalized main text. |
+| `prompt_text` | Normalized prompt text. |
+| `normalization_method` | Pipeline stages applied, e.g. `robust` or `robust_pre+wetext:zh+robust_post`. |
+| `text_normalization_language` | Detected language (`zh` or `en`), empty if WeTextProcessing was not used. |
+| `wetext_processing_enabled` | Whether WeTextProcessing ran. |
+| `normalize_tts_text_enabled` | Whether the robust normalizer ran. |
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Should I always enable WeTextProcessing?">
+    Not necessarily. The robust normalizer handles the most common TTS input noise without any extra dependencies. Enable WeTextProcessing when your input contains numbers, dates, currency, or unit expressions that need to be read aloud in their full spoken form (e.g. "2026年4月14日" → "二零二六年四月十四日").
+  </Accordion>
+  <Accordion title="Why does WeTextProcessing take a long time on the first call?">
+    WeTextProcessing builds finite-state transducer graphs from grammar files on first load. This can take 10–30 seconds. Subsequent calls in the same process are fast because the graphs are cached. For server applications, call `manager.ensure_ready()` at startup to pre-warm the normalizers before the first request arrives.
+  </Accordion>
+  <Accordion title="Can I use WeTextProcessing with Japanese text?">
+    No. `WeTextProcessingManager` only loads `zh` and `en` normalizers. Japanese text will raise a `ValueError` if WeTextProcessing is explicitly invoked on it. The robust normalizer (`normalize_tts_text`) has no language restriction and handles Japanese input correctly.
+  </Accordion>
+  <Accordion title="What happens if I disable both normalizers?">
+    Text is passed to the model as-is. This is fine for clean, well-formed input. For noisy social-media text, Markdown content, or mixed-script input, disabling both normalizers may cause mispronunciations or unexpected pauses.
+  </Accordion>
+  <Accordion title="Does normalization apply to the prompt text as well?">
+    Yes. `prepare_tts_request_texts()` normalizes both `text` and `prompt_text` through the same pipeline so that the reference transcript stays consistent with the synthesized text.
+  </Accordion>
+</AccordionGroup>

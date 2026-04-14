@@ -1,0 +1,153 @@
+---
+title: 'Long-form speech synthesis with MOSS-TTS-Nano'
+description: 'Generate speech from long texts using automatic sentence chunking, preview how text will be split, and tune memory budgets for batched CUDA inference.'
+---
+
+MOSS-TTS-Nano is optimized for short-to-medium utterances, but it handles long texts through automatic sentence chunking in voice clone mode. Instead of feeding a thousand-character paragraph to the model in one pass — which degrades quality and strains memory — the model splits the input into sentences, synthesizes each chunk with the same reference audio, and concatenates the results into a single output file.
+
+## How chunking works
+
+When `--mode voice_clone` is active (the default), long input text is split into sentence chunks using the model's built-in text tokenizer. Each chunk targets a token budget set by `--voice-clone-max-text-tokens` (default: **75 tokens**). The model uses linguistic sentence boundaries to find the best split points that stay under that budget.
+
+If the text produces only one chunk (the entire text fits in the token budget), it is synthesized in a single pass — no chunking overhead.
+
+<Note>
+Set `--voice-clone-max-text-tokens 0` (or any value ≤ 0) to disable chunking entirely and force single-pass generation regardless of text length. This is useful when you want full control over segmentation or when you are passing pre-segmented text programmatically.
+</Note>
+
+## Workflow
+
+<Steps>
+  <Step title="Prepare your text file">
+    Write your long-form text to a UTF-8 file:
+
+    ```bash
+    cat > speech_input.txt << 'EOF'
+    欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。
+    MOSS-TTS-Nano 是一款轻量级多语言语音合成模型，仅有 0.1B 参数，支持在 CPU 上实时运行。
+    它采用纯自回归架构，基于音频分词器与语言模型的组合，支持中文、英文及更多语言。
+    EOF
+    ```
+  </Step>
+  <Step title="Preview how the text will be split">
+    Use `--print-voice-clone-text-chunks` to inspect the chunks before generating audio. No audio is produced — it only prints the segmentation:
+
+    ```bash
+    moss-tts-nano generate \
+      --prompt-speech assets/audio/zh_1.wav \
+      --text-file speech_input.txt \
+      --voice-clone-max-text-tokens 75 \
+      --print-voice-clone-text-chunks
+    ```
+
+    Example output:
+
+    ```
+    Voice clone text chunks
+    ----------------------
+    max_tokens=75 split_chunks=3 effective_chunks=3
+    [chunk 1]
+    欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。
+
+    [chunk 2]
+    MOSS-TTS-Nano 是一款轻量级多语言语音合成模型，仅有 0.1B 参数，支持在 CPU 上实时运行。
+
+    [chunk 3]
+    它采用纯自回归架构，基于音频分词器与语言模型的组合，支持中文、英文及更多语言。
+    ```
+
+    Adjust `--voice-clone-max-text-tokens` until the chunks look natural and end at sentence boundaries.
+  </Step>
+  <Step title="Generate the audio">
+    Once you are happy with the segmentation, run the full synthesis:
+
+    ```bash
+    moss-tts-nano generate \
+      --prompt-speech assets/audio/zh_1.wav \
+      --text-file speech_input.txt \
+      --voice-clone-max-text-tokens 75 \
+      --output generated_audio/long_form_output.wav
+    ```
+
+    The individual chunk outputs are concatenated automatically. The final file is written to the path given by `--output`.
+  </Step>
+</Steps>
+
+## Reading text from a file
+
+Both `moss-tts-nano generate` and `python infer.py` accept `--text-file` as a mutually exclusive alternative to `--text`:
+
+```bash
+# CLI
+moss-tts-nano generate \
+  --prompt-speech assets/audio/en_2.wav \
+  --text-file my_script.txt
+
+# infer.py
+python infer.py \
+  --prompt-audio-path assets/audio/en_2.wav \
+  --text-file my_script.txt
+```
+
+The file must be UTF-8 encoded. Any encoding issues will surface as a `UnicodeDecodeError` before inference starts.
+
+## Python API chunking
+
+You can inspect or override chunking from Python using `NanoTTSService.split_voice_clone_text()`:
+
+```python
+from moss_tts_nano_runtime import NanoTTSService
+
+service = NanoTTSService()
+
+long_text = (
+    "欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。"
+    "MOSS-TTS-Nano 是一款轻量级多语言语音合成模型，仅有 0.1B 参数，支持在 CPU 上实时运行。"
+    "它采用纯自回归架构，基于音频分词器与语言模型的组合，支持中文、英文及更多语言。"
+)
+
+chunks = service.split_voice_clone_text(
+    text=long_text,
+    voice_clone_max_text_tokens=75,
+)
+
+for i, chunk in enumerate(chunks, 1):
+    print(f"[chunk {i}] {chunk}")
+```
+
+Passing `voice_clone_max_text_tokens=0` returns a single-element list containing the full text — equivalent to disabling chunking.
+
+To synthesize and get chunking metadata back, call `synthesize()` normally and inspect the returned dict:
+
+```python
+result = service.synthesize(
+    text=long_text,
+    voice="Junhao",
+    mode="voice_clone",
+    voice_clone_max_text_tokens=75,
+)
+
+print(result["voice_clone_text_chunks"])       # list of chunk strings
+print(result["voice_clone_chunk_batch_size"])  # TTS batch size used
+print(result["voice_clone_codec_batch_size"])  # codec batch size used
+```
+
+## Memory budgeting on CUDA
+
+For CUDA devices, `--voice-clone-max-memory-per-sample-gb` (default: **1.0 GB**) controls the per-sample memory budget used when auto-selecting the chunk batch size. A larger value allows more chunks to be batched together, reducing total synthesis time at the cost of peak VRAM usage.
+
+```bash
+moss-tts-nano generate \
+  --prompt-speech assets/audio/zh_1.wav \
+  --text-file long_script.txt \
+  --voice-clone-max-memory-per-sample-gb 2.0
+```
+
+On CPU this parameter has no effect — chunks are always processed one at a time.
+
+## Tips for optimal long-form results
+
+- **Chunk size**: The default of 75 tokens works well for most Chinese and English text. Increase it slightly (to 90–100) for English prose with longer sentences; decrease it (to 50–60) for mixed-script or dense technical text.
+- **Reference audio**: Use the same reference audio for the entire document. Switching reference clips between chunks will produce audible timbre changes.
+- **Sentence boundaries**: The chunker respects sentence-ending punctuation. Ensure your source text has correct sentence boundaries — missing punctuation can cause oversized chunks and quality degradation.
+- **Normalization**: Run text normalization before synthesis, especially for texts with numbers, dates, or Markdown formatting. See the [text normalization guide](/guides/text-normalization) for details.

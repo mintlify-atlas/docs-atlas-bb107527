@@ -1,0 +1,77 @@
+---
+title: "Supported languages in MOSS-TTS-Nano"
+description: "MOSS-TTS-Nano supports 20 languages including Chinese, English, Japanese, and 17 others, with built-in text normalization for zh and en."
+---
+
+MOSS-TTS-Nano supports **20 languages** out of the box. You select the language by passing the appropriate language code with your input text. Voice quality and naturalness may vary by language depending on training data distribution.
+
+## Language table
+
+| Language | Code |
+|---|---|
+| Chinese | `zh` |
+| English | `en` |
+| German | `de` |
+| Spanish | `es` |
+| French | `fr` |
+| Japanese | `ja` |
+| Italian | `it` |
+| Hungarian | `hu` |
+| Korean | `ko` |
+| Russian | `ru` |
+| Persian (Farsi) | `fa` |
+| Arabic | `ar` |
+| Polish | `pl` |
+| Portuguese | `pt` |
+| Czech | `cs` |
+| Danish | `da` |
+| Swedish | `sv` |
+| Greek | `el` |
+| Turkish | `tr` |
+
+## Text normalization
+
+<Note>
+  Automatic text normalization via [WeTextProcessing](https://github.com/WhizZest/WeTextProcessing) is currently supported for **Chinese (`zh`) and English (`en`) only**. For all other languages, text is passed through as-is. If you need normalization for another language, pre-process your text before passing it to the model.
+</Note>
+
+The normalization pipeline handles number expansion, abbreviation handling, and special character conversion before the text reaches the LLM tokenizer.
+
+## Built-in voice presets
+
+The runtime ships with ready-to-use voice presets for Chinese, English, and Japanese. These are reference audio files bundled in `assets/audio/` and loaded automatically by `NanoTTSService`.
+
+<Tabs>
+  <Tab title="Chinese">
+    | Preset name | Description |
+    |---|---|
+    | `Junhao` | Chinese male voice A (default) |
+    | `Zhiming` | Chinese male voice B |
+    | `Weiguo` | Chinese male voice C |
+    | `Xiaoyu` | Chinese female voice A |
+    | `Yuewen` | Chinese female voice B |
+    | `Lingyu` | Chinese female voice C |
+  </Tab>
+  <Tab title="English">
+    | Preset name | Description |
+    |---|---|
+    | `Trump` | Trump reference voice |
+    | `Ava` | English female voice A |
+    | `Bella` | English female voice B |
+    | `Adam` | English male voice A |
+    | `Nathan` | English male voice B |
+  </Tab>
+  <Tab title="Japanese">
+    | Preset name | Description |
+    |---|---|
+    | `Sakura` | Japanese female voice A |
+    | `Yui` | Japanese female voice B |
+    | `Aoi` | Japanese female voice C |
+    | `Hina` | Japanese female voice D |
+    | `Mei` | Japanese female voice E |
+  </Tab>
+</Tabs>
+
+<Tip>
+  The default voice is `Junhao`. To use a different built-in preset from Python, pass the `voice` parameter to `synthesize` or `synthesize_stream`. From the CLI, built-in presets are selected by passing their audio file path to `--prompt-speech` (e.g. `--prompt-speech assets/audio/en_2.wav` for Ava). To clone any other voice, provide your own reference audio file via `--prompt-speech`.
+</Tip>

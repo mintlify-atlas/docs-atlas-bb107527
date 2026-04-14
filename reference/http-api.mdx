@@ -1,0 +1,526 @@
+---
+title: "MOSS-TTS-Nano HTTP API endpoints"
+description: "Reference for all HTTP endpoints served by the MOSS-TTS-Nano FastAPI server — buffered generation, realtime streaming, warmup status, and health check."
+---
+
+The MOSS-TTS-Nano HTTP API is served by `app.py` and accessible when the server is running. Start the server with either of the following:
+
+```bash
+# Via the packaged CLI
+moss-tts-nano serve
+
+# Direct Python
+python app.py
+```
+
+The server listens at `http://localhost:18083` by default. All API endpoints are under the `/api/` prefix. Request bodies use `multipart/form-data` for endpoints that accept audio uploads.
+
+<Note>
+  The web server currently forces CPU execution regardless of the `--device` flag. All synthesis runs on CPU.
+</Note>
+
+---
+
+## GET /
+
+Returns the browser demo HTML page. Open this URL in a browser for the interactive voice clone demo.
+
+**Response:** `text/html`
+
+---
+
+## GET /health
+
+Returns runtime status and configuration details.
+
+**Response:** `application/json`
+
+<ResponseField name="status" type="string">
+  Always `"ok"` when the server is running.
+</ResponseField>
+
+<ResponseField name="device" type="string">
+  Active device, e.g. `"cpu"`.
+</ResponseField>
+
+<ResponseField name="dtype" type="string">
+  Active weights dtype, e.g. `"torch.float32"`.
+</ResponseField>
+
+<ResponseField name="cpu_runtime_loaded" type="boolean">
+  Whether the dedicated CPU runtime has been loaded.
+</ResponseField>
+
+<ResponseField name="default_cpu_threads" type="integer">
+  Number of CPU threads available on the host.
+</ResponseField>
+
+<ResponseField name="attn_implementation" type="string">
+  Configured attention backend, or `"model_default"`.
+</ResponseField>
+
+<ResponseField name="checkpoint_path" type="string">
+  Resolved path or repo ID of the loaded TTS checkpoint.
+</ResponseField>
+
+<ResponseField name="audio_tokenizer_path" type="string">
+  Resolved path or repo ID of the loaded audio tokenizer.
+</ResponseField>
+
+<ResponseField name="text_normalization_status" type="string">
+  Current WeTextProcessing normalization status message.
+</ResponseField>
+
+**Example:**
+
+```bash
+curl http://localhost:18083/health
+```
+
+```json
+{
+  "status": "ok",
+  "device": "cpu",
+  "dtype": "torch.float32",
+  "cpu_runtime_loaded": true,
+  "default_cpu_threads": 8,
+  "attn_implementation": "model_default",
+  "checkpoint_path": "OpenMOSS-Team/MOSS-TTS-Nano",
+  "audio_tokenizer_path": "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano",
+  "text_normalization_status": "WeTextProcessing disabled."
+}
+```
+
+---
+
+## GET /api/warmup-status
+
+Returns the current warmup progress. During startup the server loads the model and runs a short synthesis warmup pass. Poll this endpoint to determine when the server is ready.
+
+**Response:** `application/json`
+
+<ResponseField name="state" type="string">
+  One of `"pending"`, `"running"`, `"ready"`, `"failed"`.
+</ResponseField>
+
+<ResponseField name="progress" type="number">
+  Progress from `0.0` to `1.0`.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable status message.
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message if `state` is `"failed"`, otherwise `null`.
+</ResponseField>
+
+<ResponseField name="ready" type="boolean">
+  `true` when the server is fully warmed up and ready to accept generation requests.
+</ResponseField>
+
+<ResponseField name="failed" type="boolean">
+  `true` if warmup failed.
+</ResponseField>
+
+<ResponseField name="status_text" type="string">
+  Pre-formatted status text suitable for display.
+</ResponseField>
+
+**Example:**
+
+```bash
+curl http://localhost:18083/api/warmup-status
+```
+
+```json
+{
+  "state": "ready",
+  "progress": 1.0,
+  "message": "Warmup complete. device=cpu elapsed=4.21s",
+  "error": null,
+  "ready": true,
+  "failed": false,
+  "status_text": "Warmup complete. device=cpu elapsed=4.21s"
+}
+```
+
+---
+
+## GET /api/text-normalization-status
+
+Returns the current status of the WeTextProcessing text normalizer.
+
+**Response:** `application/json`
+
+<ResponseField name="state" type="string">
+  One of `"disabled"`, `"pending"`, `"running"`, `"ready"`, `"failed"`.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable status message.
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message if initialization failed, otherwise `null`.
+</ResponseField>
+
+<ResponseField name="ready" type="boolean">
+  `true` when the normalizer is ready.
+</ResponseField>
+
+<ResponseField name="failed" type="boolean">
+  `true` if initialization failed.
+</ResponseField>
+
+<ResponseField name="available" type="boolean">
+  `true` if WeTextProcessing is installed and available.
+</ResponseField>
+
+<ResponseField name="status_text" type="string">
+  Pre-formatted status text suitable for display.
+</ResponseField>
+
+---
+
+## GET /api/demo-prompt-audio/{demo_id}
+
+Retrieve the reference audio file for a demo entry by its ID.
+
+**Path parameter:** `demo_id` — the demo ID string (e.g., `"demo-1"`).
+
+**Response:** `audio/wav` or `application/octet-stream` — the reference audio file as binary.
+
+**Errors:**
+- `404` when the demo ID is unknown.
+
+**Example:**
+
+```bash
+curl http://localhost:18083/api/demo-prompt-audio/demo-1 --output prompt.wav
+```
+
+---
+
+## POST /api/generate
+
+Run a buffered synthesis job. The server runs the full synthesis pass, then returns the complete WAV audio encoded as Base64 in the JSON response body.
+
+**Request:** `multipart/form-data`
+
+<ParamField path="body.text" type="string" required>
+  Text to synthesize.
+</ParamField>
+
+<ParamField path="body.demo_id" type="string" default="">
+  ID of a demo entry to use as the prompt audio source. Required unless `prompt_audio` is uploaded.
+</ParamField>
+
+<ParamField path="body.prompt_audio" type="file">
+  Uploaded reference audio file. When provided, overrides the demo entry's prompt audio.
+</ParamField>
+
+<ParamField path="body.max_new_frames" type="integer" default="375">
+  Maximum audio frames to generate.
+</ParamField>
+
+<ParamField path="body.voice_clone_max_text_tokens" type="integer" default="75">
+  Sentence chunk token budget for voice cloning.
+</ParamField>
+
+<ParamField path="body.tts_max_batch_size" type="integer" default="0">
+  Maximum TTS batch size. `0` = auto.
+</ParamField>
+
+<ParamField path="body.codec_max_batch_size" type="integer" default="0">
+  Maximum codec batch size. `0` = auto.
+</ParamField>
+
+<ParamField path="body.enable_text_normalization" type="string" default="0">
+  Enable WeTextProcessing normalization. Accepts `"0"` or `"1"`.
+</ParamField>
+
+<ParamField path="body.enable_normalize_tts_text" type="string" default="0">
+  Enable `normalize_tts_text` robust text cleanup. Accepts `"0"` or `"1"`.
+</ParamField>
+
+<ParamField path="body.cpu_threads" type="integer" default="0">
+  Number of CPU threads for this request (`torch.set_num_threads`). `0` uses the server default.
+</ParamField>
+
+<ParamField path="body.attn_implementation" type="string" default="model_default">
+  Attention backend for this request. Accepted values: `"model_default"`, `"sdpa"`, `"eager"`.
+</ParamField>
+
+<ParamField path="body.do_sample" type="string" default="1">
+  Sampling toggle. `"1"` enables sampling, `"0"` uses greedy decoding.
+</ParamField>
+
+<ParamField path="body.text_temperature" type="float" default="1.0">
+  Text layer sampling temperature.
+</ParamField>
+
+<ParamField path="body.text_top_p" type="float" default="1.0">
+  Text layer nucleus sampling threshold.
+</ParamField>
+
+<ParamField path="body.text_top_k" type="integer" default="50">
+  Text layer top-k limit.
+</ParamField>
+
+<ParamField path="body.audio_temperature" type="float" default="0.8">
+  Audio layer sampling temperature.
+</ParamField>
+
+<ParamField path="body.audio_top_p" type="float" default="0.95">
+  Audio layer nucleus sampling threshold.
+</ParamField>
+
+<ParamField path="body.audio_top_k" type="integer" default="25">
+  Audio layer top-k limit.
+</ParamField>
+
+<ParamField path="body.audio_repetition_penalty" type="float" default="1.2">
+  Audio token repetition penalty.
+</ParamField>
+
+<ParamField path="body.seed" type="string" default="0">
+  Random seed as a string. `"0"` or empty string disables seeding.
+</ParamField>
+
+**Response:** `application/json`
+
+<ResponseField name="audio_base64" type="string">
+  Base64-encoded WAV audio.
+</ResponseField>
+
+<ResponseField name="sample_rate" type="integer">
+  Sample rate of the generated audio in Hz.
+</ResponseField>
+
+<ResponseField name="run_status" type="string">
+  Human-readable summary of the completed generation run.
+</ResponseField>
+
+<ResponseField name="prompt_audio_path" type="string">
+  Display path of the reference audio used.
+</ResponseField>
+
+<ResponseField name="warmup_status_text" type="string">
+  Current warmup status message.
+</ResponseField>
+
+<ResponseField name="text_normalization_status_text" type="string">
+  Current text normalization status message.
+</ResponseField>
+
+<ResponseField name="text_chunks" type="string[]">
+  Sentence chunks the text was split into for voice cloning.
+</ResponseField>
+
+<ResponseField name="normalized_text" type="string">
+  Text after normalization, as actually passed to the model.
+</ResponseField>
+
+<ResponseField name="normalization_method" type="string">
+  Name of the text normalization method that was applied.
+</ResponseField>
+
+<ResponseField name="text_normalization_language" type="string">
+  Detected language used for WeTextProcessing normalization (e.g. `"zh"` or `"en"`). Empty string when WeTextProcessing was not applied.
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:18083/api/generate \
+  -F "text=Hello, world!" \
+  -F "demo_id=demo-1" \
+  -F "seed=42"
+```
+
+**Errors:**
+- `400` — missing or invalid `text`, or `demo_id` and `prompt_audio` both absent.
+- `500` — synthesis failed or warmup has not completed successfully.
+
+---
+
+## POST /api/generate-stream/start
+
+Start a realtime streaming synthesis job. Returns immediately with a `stream_id` and URLs for streaming the audio and polling status. The synthesis runs in a background thread.
+
+**Request:** `multipart/form-data` — same fields as `POST /api/generate`.
+
+**Response:** `application/json`
+
+<ResponseField name="stream_id" type="string">
+  Unique ID for this streaming job, e.g. `"stream-1744123456789-a1b2c3d4"`.
+</ResponseField>
+
+<ResponseField name="audio_url" type="string">
+  URL to stream raw PCM audio from: `GET /api/generate-stream/{stream_id}/audio`.
+</ResponseField>
+
+<ResponseField name="status_url" type="string">
+  URL to poll stream status: `GET /api/generate-stream/{stream_id}/status`.
+</ResponseField>
+
+<ResponseField name="result_url" type="string">
+  URL to retrieve the final result: `GET /api/generate-stream/{stream_id}/result`.
+</ResponseField>
+
+<ResponseField name="sample_rate" type="integer">
+  Audio sample rate in Hz (typically 48000).
+</ResponseField>
+
+<ResponseField name="channels" type="integer">
+  Number of audio channels (typically 2 for stereo).
+</ResponseField>
+
+<ResponseField name="run_status" type="string">
+  Initial status message.
+</ResponseField>
+
+<ResponseField name="text_chunks" type="string[]">
+  Pre-computed sentence chunks for the input text.
+</ResponseField>
+
+<ResponseField name="normalized_text" type="string">
+  Normalized text as passed to the model.
+</ResponseField>
+
+**Example:**
+
+```bash
+START=$(curl -s -X POST http://localhost:18083/api/generate-stream/start \
+  -F "text=Hello, world!" \
+  -F "demo_id=demo-1")
+
+STREAM_ID=$(echo $START | python3 -c "import sys,json; print(json.load(sys.stdin)['stream_id'])")
+AUDIO_URL=$(echo $START | python3 -c "import sys,json; print(json.load(sys.stdin)['audio_url'])")
+
+# Stream the audio (raw PCM s16le, 48kHz stereo)
+curl "$AUDIO_URL" --output stream_audio.pcm
+```
+
+---
+
+## GET /api/generate-stream/{stream_id}/audio
+
+Stream raw PCM audio chunks for an active streaming job. Returns a `StreamingResponse` that yields `audio/octet-stream` chunks as audio is generated.
+
+Audio format is indicated in response headers:
+
+| Header | Description |
+|---|---|
+| `X-Audio-Codec` | Always `pcm_s16le` |
+| `X-Audio-Sample-Rate` | Sample rate in Hz |
+| `X-Audio-Channels` | Number of channels |
+| `X-Stream-Id` | The stream ID |
+
+**Errors:**
+- `404` when the stream ID is unknown.
+
+---
+
+## GET /api/generate-stream/{stream_id}/status
+
+Poll the status of an active or completed streaming job.
+
+**Response:** `application/json`
+
+<ResponseField name="stream_id" type="string">
+  The stream ID.
+</ResponseField>
+
+<ResponseField name="state" type="string">
+  One of `"starting"`, `"running"`, `"done"`, `"failed"`, `"closed"`.
+</ResponseField>
+
+<ResponseField name="run_status" type="string">
+  Human-readable status message.
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message when `state` is `"failed"`, otherwise `null`.
+</ResponseField>
+
+<ResponseField name="emitted_audio_seconds" type="number">
+  Seconds of audio emitted to the stream so far.
+</ResponseField>
+
+<ResponseField name="lead_seconds" type="number">
+  Seconds of audio buffered ahead of estimated playback.
+</ResponseField>
+
+<ResponseField name="first_audio_latency_seconds" type="number | null">
+  Seconds from job start to first audio chunk, or `null` if no audio emitted yet.
+</ResponseField>
+
+<ResponseField name="current_chunk_index" type="integer | null">
+  Index of the text chunk currently being synthesized.
+</ResponseField>
+
+<ResponseField name="playback_chunk_index" type="integer | null">
+  Estimated index of the chunk at the current playback position.
+</ResponseField>
+
+<ResponseField name="text_chunks" type="string[]">
+  Sentence chunks for this stream.
+</ResponseField>
+
+<ResponseField name="ready" type="boolean">
+  `true` when synthesis is complete.
+</ResponseField>
+
+<ResponseField name="failed" type="boolean">
+  `true` when synthesis failed.
+</ResponseField>
+
+---
+
+## GET /api/generate-stream/{stream_id}/result
+
+Retrieve the final result of a completed streaming job. Returns `202 Accepted` while still in progress.
+
+**Response:** `application/json`
+
+<ResponseField name="stream_id" type="string">
+  The stream ID.
+</ResponseField>
+
+<ResponseField name="ready" type="boolean">
+  `true` when the result is available.
+</ResponseField>
+
+<ResponseField name="audio_base64" type="string">
+  Base64-encoded WAV audio of the complete generated output.
+</ResponseField>
+
+<ResponseField name="run_status" type="string">
+  Final run summary.
+</ResponseField>
+
+<ResponseField name="text_chunks" type="string[]">
+  Sentence chunks used during synthesis.
+</ResponseField>
+
+<ResponseField name="audio_chunk_ranges" type="array">
+  Array of `[start_seconds, end_seconds, chunk_index]` tuples mapping audio time ranges to text chunks. Useful for synchronized text highlighting during playback.
+</ResponseField>
+
+**Errors:**
+- `202` — job still in progress.
+- `404` — stream ID unknown.
+- `500` — job failed.
+
+---
+
+## POST /api/generate-stream/{stream_id}/close
+
+Close and clean up a streaming job. Stops audio generation and removes the job from memory.
+
+**Response:** `application/json` — the final job snapshot (same structure as the status response).
+
+**Errors:**
+- `404` — stream ID unknown.

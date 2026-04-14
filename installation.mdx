@@ -1,0 +1,94 @@
+---
+title: "Install MOSS-TTS-Nano and set up your environment"
+description: "Full installation instructions for MOSS-TTS-Nano, including Python prerequisites, environment setup, and dependency installation."
+---
+
+This page covers every step needed to get MOSS-TTS-Nano installed on your machine, from creating a clean Python environment through to verifying that the `moss-tts-nano` CLI is available.
+
+## Prerequisites
+
+- **Python 3.10 or later** — required by `pyproject.toml`. Python 3.12 is recommended.
+- **Git** — to clone the repository.
+- **conda** (recommended) or `venv` for environment isolation.
+
+## Create a Python environment
+
+<Tabs>
+  <Tab title="Conda">
+    Create and activate a dedicated conda environment:
+
+    ```bash
+    conda create -n moss-tts-nano python=3.12 -y
+    conda activate moss-tts-nano
+    ```
+  </Tab>
+  <Tab title="venv">
+    Create and activate a standard virtual environment:
+
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+    ```
+  </Tab>
+</Tabs>
+
+## Clone the repository
+
+```bash
+git clone https://github.com/OpenMOSS/MOSS-TTS-Nano.git
+cd MOSS-TTS-Nano
+```
+
+## Install dependencies
+
+Install all runtime dependencies listed in `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
+```
+
+The `requirements.txt` file pins the following packages:
+
+| Package | Version |
+|---|---|
+| `numpy` | `>=1.24` |
+| `fastapi` | `>=0.110.0` |
+| `python-multipart` | `>=0.0.9` |
+| `sentencepiece` | `>=0.1.99` |
+| `torch` | `==2.7.0` |
+| `torchaudio` | `==2.7.0` |
+| `transformers` | `==4.57.1` |
+| `uvicorn` | `>=0.29.0` |
+| `WeTextProcessing` | `>=1.0.4.1` |
+| `soundfile` | latest |
+
+<Note>
+  `torch` and `torchaudio` are pinned to version **2.7.0** in both `requirements.txt` and `pyproject.toml`. Installing a different version may cause compatibility issues with the model and audio tokenizer.
+</Note>
+
+## Install the package in editable mode
+
+```bash
+pip install -e .
+```
+
+This installs the `moss_tts_nano` Python package and registers the `moss-tts-nano` entry point in your environment. After this step you can call `moss-tts-nano generate` and `moss-tts-nano serve` from any directory as long as the environment is active.
+
+## WeTextProcessing fallback
+
+If the `WeTextProcessing` installation from `requirements.txt` fails — typically because `pynini` cannot be built from source — install `pynini` through conda first, then install `WeTextProcessing` from source:
+
+```bash
+conda install -c conda-forge pynini=2.1.6.post1 -y
+pip install git+https://github.com/WhizZest/WeTextProcessing.git
+```
+
+## Verify the installation
+
+Confirm that the CLI is available:
+
+```bash
+moss-tts-nano --help
+```
+
+You should see the `generate` and `serve` subcommands listed in the output.

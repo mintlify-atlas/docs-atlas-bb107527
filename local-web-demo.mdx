@@ -1,0 +1,127 @@
+---
+title: "Launch the MOSS-TTS-Nano local web demo"
+description: "Start the FastAPI-powered local web demo for MOSS-TTS-Nano, open it in your browser, and generate speech interactively using voice clone mode."
+---
+
+MOSS-TTS-Nano ships a FastAPI web application that lets you generate speech through a browser interface without writing any code. This page shows you how to start the server, describes the available launch options, and explains the controls in the demo UI.
+
+<Steps>
+  <Step title="Install the package">
+    Complete the [installation guide](/installation) first. Both `python app.py` and `moss-tts-nano serve` require the dependencies to be installed.
+  </Step>
+
+  <Step title="Start the server">
+    Launch the web demo using either the CLI or the script directly:
+
+    <Tabs>
+      <Tab title="CLI">
+        ```bash
+        moss-tts-nano serve
+        ```
+      </Tab>
+      <Tab title="Python">
+        ```bash
+        python app.py
+        ```
+      </Tab>
+    </Tabs>
+
+    Both commands start a uvicorn server on `http://127.0.0.1:18083` by default.
+  </Step>
+
+  <Step title="Wait for warmup">
+    On startup the server loads the model and runs a warmup synthesis pass before accepting requests. The **Warmup Status** panel in the browser UI shows live progress. Warmup typically takes 30–60 seconds on the first run while model weights are being downloaded and loaded.
+
+    <Note>
+      The warmup synthesis is performed by the `warmup()` method in `NanoTTSService`. Once warmup is complete the status panel displays the device and elapsed time. Subsequent restarts are faster because weights are cached locally by the Hugging Face library.
+    </Note>
+  </Step>
+
+  <Step title="Open the demo in your browser">
+    Navigate to:
+
+    ```
+    http://127.0.0.1:18083
+    ```
+
+    The demo loads a **Voice Clone** interface where you can select a preset, upload your own reference audio, enter text, and generate speech.
+  </Step>
+</Steps>
+
+## `moss-tts-nano serve` options
+
+All flags are optional. Defaults are shown.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--host` | `localhost` | Host address for the uvicorn server. |
+| `--port` | `18083` | Port number for the uvicorn server. |
+| `--device` | `cpu` | Execution device: `cpu` or `auto`. The web demo always forces CPU execution. `auto` is accepted but still runs on CPU. |
+| `--dtype` | `auto` | Model weights dtype: `auto`, `float32`, `float16`, or `bfloat16`. |
+| `--attn-implementation` | `auto` | Attention backend: `auto`, `sdpa`, or `eager`. (`flash_attention_2` is not available in serve mode since it always runs on CPU.) |
+| `--checkpoint` | `OpenMOSS-Team/MOSS-TTS-Nano` | HuggingFace repo ID or local directory for the TTS model checkpoint. |
+| `--audio-tokenizer` | `OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano` | HuggingFace repo ID or local directory for the audio tokenizer. |
+| `--output-dir` | `generated_audio/` | Directory where intermediate WAV files are written during generation. |
+
+Example using a local checkpoint on a specific port:
+
+```bash
+moss-tts-nano serve \
+  --checkpoint /path/to/local/checkpoint \
+  --port 8080
+```
+
+## Web demo features
+
+### Demo presets
+
+The **Demo** dropdown is populated from `assets/demo.jsonl`. Select a preset to load a built-in reference audio file and sample text. Switching the preset replaces both the prompt speech and the text input.
+
+### Prompt speech
+
+Upload your own reference audio using the **Prompt Speech** file picker. Accepted formats include WAV, MP3, FLAC, M4A, OGG, Opus, and AAC. To revert to the selected demo's audio, click **使用 Demo 音频**.
+
+### Text input
+
+Enter the text you want to synthesize in the **Text** field. The model supports 20 languages including Chinese, English, Japanese, and more.
+
+### Generation options
+
+Expand the **Generation Options** section to tune inference parameters:
+
+| Option | Default | Description |
+|---|---|---|
+| Max New Frames | `375` | Maximum number of audio frames to generate. |
+| Voice Clone Max Text Tokens | `75` | Token budget per sentence chunk in voice clone mode. |
+| Max TTS Batch Size | `1` | Maximum batch size for the TTS model. Set to `0` for auto. |
+| Max Codec Batch Size | `0` | Maximum batch size for the audio codec. Set to `0` for auto. |
+| CPU Threads | `4` | Number of threads passed to `torch.set_num_threads` for that request. |
+| Attention Backend | `model_default` | Attention implementation: `model_default`, `sdpa`, or `eager`. |
+| Seed | `0` | Random seed. `0` disables seeding. |
+| Text Temperature | `1.0` | Sampling temperature for the text layer. |
+| Text Top P | `1.0` | Top-p sampling for the text layer. |
+| Text Top K | `50` | Top-k sampling for the text layer. |
+| Audio Temperature | `0.8` | Sampling temperature for the audio layer. |
+| Audio Top P | `0.95` | Top-p sampling for the audio layer. |
+| Audio Top K | `25` | Top-k sampling for the audio layer. |
+| Audio Repetition Penalty | `1.2` | Repetition penalty for the audio layer. |
+| Do Sample | enabled | Use sampling instead of greedy decoding. |
+| Enable WeTextProcessing | disabled | Apply WeTextProcessing text normalization before synthesis. |
+| Enable normalize\_tts\_text | disabled | Apply the repository's robust text cleanup before synthesis. |
+| Realtime Streaming Decode | enabled | Stream audio to the browser as it is generated rather than waiting for the full output. |
+| Initial Playback Delay | `0.08 s` | Seconds of audio to buffer before playback begins in streaming mode. |
+
+<Tip>
+  On CPU, increasing the **CPU Threads** value can reduce generation latency on machines with many cores. The value maps directly to `torch.set_num_threads` and is scoped to each individual request, so it does not affect other concurrent operations.
+</Tip>
+
+### Output panel
+
+The right-hand panel shows:
+
+- **Warmup Status** — model load and warmup progress.
+- **Text Normalization Status** — WeTextProcessing readiness.
+- **Run Status** — generation progress and timing after each request.
+- **Normalized Text** — the text as it was passed to the model after normalization.
+- **Playback Script** — sentence chunks highlighted in sync with audio playback.
+- **Generated Speech** — audio player for the completed output.

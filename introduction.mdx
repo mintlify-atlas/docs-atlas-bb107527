@@ -1,0 +1,47 @@
+---
+title: "MOSS-TTS-Nano: open-source multilingual tiny TTS"
+description: "MOSS-TTS-Nano is a 0.1B-parameter open-source TTS model from MOSI.AI and OpenMOSS, designed for realtime multilingual speech generation."
+---
+
+MOSS-TTS-Nano is an open-source multilingual speech generation model built by [MOSI.AI](https://mosi.cn/#hero) and the [OpenMOSS team](https://www.open-moss.com/). At only 0.1B parameters, it is designed for realtime synthesis, can run on CPU without a GPU, and keeps the deployment stack simple enough for local demos, web serving, and lightweight product integration.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install the package and generate your first audio file in minutes.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Learn how the Audio Tokenizer and LLM pipeline work together.
+  </Card>
+  <Card title="Voice cloning" icon="microphone" href="/guides/voice-cloning">
+    Clone any voice from a short reference audio clip.
+  </Card>
+  <Card title="CLI reference" icon="rectangle-terminal" href="/reference/cli">
+    Full reference for the `moss-tts-nano` command-line interface.
+  </Card>
+</CardGroup>
+
+## Key features
+
+- **Tiny model size** — 0.1B parameters, small enough for edge and CPU-only deployment
+- **Native 48 kHz stereo output** — high-fidelity 2-channel audio without post-processing
+- **20 supported languages** — Chinese, English, Japanese, and 17 more
+- **Pure autoregressive architecture** — Audio Tokenizer + LLM pipeline with no separate acoustic model
+- **Streaming inference** — low first-audio latency; runs on a 4-core CPU
+- **Long-text support** — automatic chunked voice cloning for extended inputs
+- **Simple deployment** — run directly with `python infer.py`, `python app.py`, or the packaged `moss-tts-nano` CLI
+
+## Model availability
+
+Model weights are published on two platforms:
+
+- **Hugging Face**: [OpenMOSS-Team/MOSS-TTS-Nano](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano)
+- **ModelScope**: [openmoss/MOSS-TTS-Nano](https://modelscope.cn/models/openmoss/MOSS-TTS-Nano)
+
+The companion audio tokenizer is available separately:
+
+- **Hugging Face**: [OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano)
+- **ModelScope**: [openmoss/MOSS-Audio-Tokenizer-Nano](https://modelscope.cn/models/openmoss/MOSS-Audio-Tokenizer-Nano)
+
+<Note>
+  MOSS-TTS-Nano is described in the MOSS-TTS Technical Report ([arXiv 2603.18090](https://arxiv.org/abs/2603.18090)). The audio tokenizer architecture is covered separately in the MOSS-Audio-Tokenizer paper ([arXiv 2602.10934](https://arxiv.org/abs/2602.10934)).
+</Note>

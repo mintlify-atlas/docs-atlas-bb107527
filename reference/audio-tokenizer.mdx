@@ -1,0 +1,155 @@
+---
+title: "MOSS-Audio-Tokenizer-Nano reference"
+description: "Architecture, capabilities, configuration, and integration reference for MOSS-Audio-Tokenizer-Nano — the shared audio backbone of the MOSS-TTS family."
+---
+
+MOSS-Audio-Tokenizer-Nano is the discrete audio codec used by MOSS-TTS-Nano. It converts raw audio waveforms into compact token sequences that the language model can generate, and decodes those tokens back to audio. Understanding the tokenizer helps you choose the right configuration for your use case.
+
+---
+
+## Architecture
+
+MOSS-Audio-Tokenizer-Nano is built on the **Cat** architecture: **C**ausal **A**udio **T**okenizer with **T**ransformer. Unlike traditional neural audio codecs that rely on CNNs for local feature extraction, Cat is composed entirely of causal Transformer blocks — making it CNN-free. This design enables a pure autoregressive pipeline when combined with a language model.
+
+| Property | Value |
+|---|---|
+| Parameters | ~20 million |
+| Architecture | Causal Transformer (CNN-free) |
+| Input/output format | 48 kHz stereo |
+| Token rate | 12.5 Hz |
+| Codebook type | RVQ (Residual Vector Quantization) |
+| Codebooks | 16 |
+| Bitrate range | 0.125 kbps to 2 kbps |
+
+The tokenizer compresses 48 kHz stereo audio into a 12.5 Hz token stream. At 12.5 tokens per second with 16 RVQ codebook layers, the model can represent up to 2 kbps. You can use fewer codebook layers via the `nq` parameter to trade fidelity for speed.
+
+---
+
+## Shared backbone
+
+MOSS-Audio-Tokenizer-Nano is the unified audio interface for the entire MOSS product family. The same checkpoint is shared across:
+
+- MOSS-TTS
+- MOSS-TTS-Nano
+- MOSS-TTSD
+- MOSS-VoiceGenerator
+- MOSS-SoundEffect
+- MOSS-TTS-Realtime
+
+This shared design ensures consistent audio representation across the full product line.
+
+---
+
+## Model weights
+
+Download the tokenizer from either Hugging Face or ModelScope:
+
+| Registry | Location |
+|---|---|
+| Hugging Face | [OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano) |
+| ModelScope | [openmoss/MOSS-Audio-Tokenizer-Nano](https://modelscope.cn/models/openmoss/MOSS-Audio-Tokenizer-Nano) |
+
+By default, MOSS-TTS-Nano downloads the tokenizer automatically from Hugging Face using the `transformers` `from_pretrained()` mechanism. No manual download is needed for standard usage.
+
+For more information about the tokenizer's training, evaluation metrics, and advanced usage, see the [MOSS-Audio-Tokenizer repository](https://github.com/OpenMOSS/MOSS-Audio-Tokenizer).
+
+---
+
+## Configuring the tokenizer path
+
+### CLI
+
+Pass the `--audio-tokenizer` flag to either subcommand:
+
+```bash
+# Use a local directory
+moss-tts-nano generate \
+  --audio-tokenizer /path/to/MOSS-Audio-Tokenizer-Nano \
+  --prompt-speech assets/audio/zh_1.wav \
+  --text "你好"
+
+# Use a Hugging Face repo ID (default)
+moss-tts-nano generate \
+  --audio-tokenizer OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano \
+  --prompt-speech assets/audio/zh_1.wav \
+  --text "你好"
+```
+
+### Python API
+
+Pass `audio_tokenizer_path` to the `NanoTTSService` constructor:
+
+```python
+from moss_tts_nano_runtime import NanoTTSService
+
+service = NanoTTSService(
+    checkpoint_path="OpenMOSS-Team/MOSS-TTS-Nano",
+    audio_tokenizer_path="/models/MOSS-Audio-Tokenizer-Nano",  # local path
+)
+```
+
+---
+
+## Attention backend
+
+The tokenizer supports two attention backends. The backend is resolved automatically based on the TTS model's attention setting:
+
+| Condition | Codec backend |
+|---|---|
+| TTS uses `flash_attention_2` | `flash_attention_2` |
+| All other cases | `sdpa` |
+
+<Note>
+  `flash_attention_2` requires CUDA, the `flash_attn` package, and fp16 or bf16 dtype. On CPU, `sdpa` is always used.
+</Note>
+
+You can influence the codec backend indirectly by setting `--attn-implementation` on the serve command or passing `attn_implementation` to the `NanoTTSService` constructor. There is no way to set the codec backend independently.
+
+---
+
+## RVQ codebook depth (`nq`)
+
+By default, MOSS-TTS-Nano uses all 16 RVQ codebook layers for both encoding the reference audio and decoding the generated audio. You can reduce this to the first `nq` layers to lower compute cost at the expense of audio quality.
+
+### CLI
+
+```bash
+# Use only the first 8 codebook layers
+moss-tts-nano generate \
+  --nq 8 \
+  --prompt-speech assets/audio/en_2.wav \
+  --text "Hello"
+```
+
+<Warning>
+  The `--nq` flag is available in `infer.py` directly but is not exposed on the `moss-tts-nano generate` subcommand. Use the Python API to control `nq` from application code.
+</Warning>
+
+### Python API
+
+```python
+result = service.synthesize(
+    text="Hello, world!",
+    voice="Ava",
+    nq=8,  # use first 8 of 16 codebook layers
+)
+```
+
+<ParamField path="nq" type="int | None" default="None">
+  Number of RVQ codebook layers to use. `None` uses all 16 layers (maximum quality and compute). Lower values reduce audio fidelity but speed up encoding and decoding.
+</ParamField>
+
+---
+
+## Frame rate and output length
+
+Because the token stream runs at 12.5 Hz, the number of generated frames maps directly to output audio duration:
+
+| Frames (`max_new_frames`) | Audio duration |
+|---|---|
+| 125 | ~10 seconds |
+| 250 | ~20 seconds |
+| 375 (default) | ~30 seconds |
+| 500 | ~40 seconds |
+
+The 48 kHz stereo output is then decoded from the token stream at full resolution. Each generated frame corresponds to 80 ms of audio at the token level.

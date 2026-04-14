@@ -1,0 +1,156 @@
+---
+title: 'Voice cloning with MOSS-TTS-Nano'
+description: "Clone any speaker's voice from a short reference audio clip, or pick a built-in preset. Covers voice_clone and continuation modes with examples."
+---
+
+Voice cloning is the primary synthesis workflow in MOSS-TTS-Nano. You provide a short reference audio clip, and the model reproduces the target text in the speaker's voice — capturing their tone, accent, and speaking style. For most use cases this is the mode you want.
+
+## Inference modes
+
+MOSS-TTS-Nano supports two modes, selected with `--mode` in `infer.py` and `moss-tts-nano generate`, or with the `mode` parameter in the Python API:
+
+| Mode | When to use |
+| --- | --- |
+| `voice_clone` | Provide a reference audio clip (`prompt_audio_path`) and target text. The model speaks the text in the reference speaker's voice. **This is the default.** |
+| `continuation` | Plain TTS (no reference audio) or stylistic continuation where you supply a `prompt_text` + `prompt_speech` and the model continues from that context. |
+
+In `continuation` mode without a reference audio clip the model generates speech from text alone. When you do supply both `--prompt-speech` and `--prompt-text`, the model treats them as the beginning of the audio to continue from.
+
+## Quick start
+
+<Tabs>
+  <Tab title="CLI">
+```bash
+moss-tts-nano generate \
+  --prompt-speech assets/audio/zh_1.wav \
+  --text "欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。"
+```
+
+Output is written to `generated_audio/moss_tts_nano_output.wav` by default. Use `--output` to change the destination path.
+
+You can also use `python infer.py` directly with the same arguments, which writes to `generated_audio/infer_output.wav` by default:
+
+```bash
+python infer.py \
+  --prompt-audio-path assets/audio/zh_1.wav \
+  --text "欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。"
+```
+  </Tab>
+  <Tab title="Python API">
+```python
+from moss_tts_nano_runtime import NanoTTSService
+
+service = NanoTTSService()
+
+result = service.synthesize(
+    text="欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。",
+    mode="voice_clone",
+    voice="Junhao",  # use a built-in preset
+)
+
+print(result["audio_path"])   # path to the saved wav file
+print(result["sample_rate"])  # 48000
+```
+  </Tab>
+</Tabs>
+
+## Built-in voice presets
+
+`NanoTTSService` ships with 16 built-in voice presets defined in `_DEFAULT_VOICE_FILES`. The default voice is **Junhao**.
+
+### Chinese voices
+
+| Name | Description |
+| --- | --- |
+| Junhao | Chinese male voice A |
+| Zhiming | Chinese male voice B |
+| Weiguo | Chinese male voice C |
+| Xiaoyu | Chinese female voice A |
+| Yuewen | Chinese female voice B |
+| Lingyu | Chinese female voice C |
+
+### English voices
+
+| Name | Description |
+| --- | --- |
+| Trump | Trump reference voice |
+| Ava | English female voice A |
+| Bella | English female voice B |
+| Adam | English male voice A |
+| Nathan | English male voice B |
+
+### Japanese voices
+
+| Name | Description |
+| --- | --- |
+| Sakura | Japanese female voice A |
+| Yui | Japanese female voice B |
+| Aoi | Japanese female voice C |
+| Hina | Japanese female voice D |
+| Mei | Japanese female voice E |
+
+Pass the preset name as `voice` in the Python API. From the CLI, reference the preset's audio file directly with `--prompt-speech` (e.g. `--prompt-speech assets/audio/en_2.wav` for Ava). There is no `--voice` flag in the CLI.
+
+## Using a custom reference audio file
+
+Supply any WAV or MP3 file as the reference speaker with `--prompt-speech` (CLI) or `prompt_audio_path` (Python API):
+
+<Tabs>
+  <Tab title="CLI">
+```bash
+moss-tts-nano generate \
+  --prompt-speech /path/to/my_speaker.wav \
+  --text "This is synthesized in my speaker's voice."
+```
+  </Tab>
+  <Tab title="Python API">
+```python
+result = service.synthesize(
+    text="This is synthesized in my speaker's voice.",
+    mode="voice_clone",
+    prompt_audio_path="/path/to/my_speaker.wav",
+)
+```
+  </Tab>
+</Tabs>
+
+<Tip>
+Keep reference audio between 3 and 10 seconds of clean, continuous speech with minimal background noise. Clips shorter than 3 seconds may not capture enough voice characteristics; clips longer than 10 seconds do not meaningfully improve quality and slow down prompt encoding.
+</Tip>
+
+## Continuation mode
+
+Use `continuation` when you want plain TTS without a reference speaker, or when you want the model to continue from a specific audio context:
+
+<Tabs>
+  <Tab title="CLI — plain TTS">
+```bash
+moss-tts-nano generate \
+  --mode continuation \
+  --text "Hello, this is a plain text-to-speech synthesis."
+```
+  </Tab>
+  <Tab title="CLI — with audio context">
+```bash
+moss-tts-nano generate \
+  --mode continuation \
+  --prompt-speech assets/audio/en_2.wav \
+  --prompt-text "This is the beginning of the recording." \
+  --text "And this is the continuation that follows."
+```
+  </Tab>
+  <Tab title="Python API">
+```python
+result = service.synthesize(
+    text="And this is the continuation that follows.",
+    mode="continuation",
+    prompt_audio_path="assets/audio/en_2.wav",
+    prompt_text="This is the beginning of the recording.",
+)
+```
+  </Tab>
+</Tabs>
+
+<Note>
+When using `continuation` mode with a prompt audio clip, `prompt_text` is required. The model uses the transcript to align the audio context correctly before generating the continuation.
+</Note>

@@ -1,0 +1,187 @@
+---
+title: 'Deploy MOSS-TTS-Nano for production use'
+description: "Deploy MOSS-TTS-Nano as a CLI batch tool, a local FastAPI server, or an embedded Python service with device, dtype, and attention backend options."
+---
+
+MOSS-TTS-Nano is designed to run in a variety of deployment contexts — from one-off CLI scripts to long-lived web servers. This guide covers three deployment patterns, how to configure the model for your hardware, and production readiness tips.
+
+## Deployment patterns
+
+<CardGroup cols={3}>
+  <Card title="CLI one-off generation" icon="terminal">
+    Batch or script-based generation. Best for pipelines, offline processing, and quick local tests.
+  </Card>
+  <Card title="Local web server" icon="server">
+    FastAPI + uvicorn server with a browser UI and HTTP API. Best for internal tools and demos.
+  </Card>
+  <Card title="Python service embedding" icon="code">
+    Instantiate `NanoTTSService` directly in your application. Best for programmatic integration.
+  </Card>
+</CardGroup>
+
+### Pattern 1 — CLI one-off generation
+
+After `pip install -e .`, the `moss-tts-nano generate` command is available. It loads the model, runs inference, writes a WAV file, and exits.
+
+```bash
+moss-tts-nano generate \
+  --prompt-speech assets/audio/zh_1.wav \
+  --text "欢迎使用 MOSS-TTS-Nano。" \
+  --output generated_audio/output.wav \
+  --device cpu \
+  --dtype float32
+```
+
+This pattern incurs a cold-start on every invocation (model loading takes several seconds). It is suitable for batch jobs where you queue many requests and run them sequentially, but not for interactive or low-latency applications.
+
+### Pattern 2 — Local web server
+
+`moss-tts-nano serve` launches a FastAPI application backed by uvicorn. The model stays loaded in memory between requests, eliminating cold-start latency after the first request.
+
+```bash
+moss-tts-nano serve \
+  --host 0.0.0.0 \
+  --port 18083 \
+  --device cpu \
+  --dtype auto \
+  --attn-implementation auto
+```
+
+Open `http://localhost:18083` in a browser for the interactive demo UI. The server also exposes HTTP endpoints for programmatic access. The `--host` and `--port` flags default to `localhost` and `18083` respectively.
+
+You can also launch the server directly with:
+
+```bash
+python app.py
+```
+
+### Pattern 3 — Python service embedding
+
+Import `NanoTTSService` from `moss_tts_nano_runtime` and instantiate it inside your application. The service holds the model in memory and exposes `synthesize()` and `synthesize_stream()` methods.
+
+```python
+from moss_tts_nano_runtime import NanoTTSService
+
+service = NanoTTSService(
+    checkpoint_path="OpenMOSS-Team/MOSS-TTS-Nano",
+    audio_tokenizer_path="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano",
+    device="auto",
+    dtype="auto",
+    attn_implementation="auto",
+    output_dir="generated_audio",
+)
+
+# Warm up once at startup
+service.preload()
+service.warmup()
+
+# Synthesize on demand
+result = service.synthesize(
+    text="Hello, this is MOSS-TTS-Nano.",
+    voice="Ava",
+    mode="voice_clone",
+)
+print(result["audio_path"])
+```
+
+## NanoTTSService constructor parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `checkpoint_path` | `str \| Path` | `"OpenMOSS-Team/MOSS-TTS-Nano"` | HF repo ID or local path to the TTS checkpoint. |
+| `audio_tokenizer_path` | `str \| Path` | `"OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano"` | HF repo ID or local path to the audio tokenizer. |
+| `device` | `str` | `"auto"` | Execution device: `auto`, `cpu`, `cuda`, or `cuda:0`. |
+| `dtype` | `str` | `"auto"` | Weights dtype: `auto`, `float32`, `float16`, or `bfloat16`. |
+| `attn_implementation` | `str` | `"auto"` | Attention backend: `auto`, `sdpa`, `flash_attention_2`, or `eager`. |
+| `output_dir` | `str \| Path` | `generated_audio/` | Directory where generated WAV files are saved. Created automatically. |
+| `voice_presets` | `dict \| None` | Built-in presets | Override the default voice preset dictionary. |
+
+## Device and dtype selection
+
+When `device="auto"`, the service uses CUDA if available, otherwise CPU. When `dtype="auto"`, the service picks:
+
+- On CUDA: `bfloat16` if the GPU supports it, otherwise `float16`.
+- On CPU: `float32`.
+
+To force a specific combination:
+
+```python
+# CPU, full precision
+service = NanoTTSService(device="cpu", dtype="float32")
+
+# CUDA, half precision
+service = NanoTTSService(device="cuda", dtype="float16")
+```
+
+<Warning>
+The MOSS-TTS-Nano LLM has approximately 0.1B parameters plus the MOSS-Audio-Tokenizer-Nano (~20M parameters). On CPU with `float32`, expect around **500 MB RAM** consumed by model weights alone, plus additional memory for KV cache and audio buffers during inference. On GPU with `float16` or `bfloat16`, the footprint is approximately half that.
+</Warning>
+
+## Attention backend
+
+| Backend | Requirements | Notes |
+| --- | --- | --- |
+| `sdpa` | PyTorch ≥ 2.0 | Default on both CPU and CUDA (when Flash Attention is unavailable). Stable and broadly compatible. |
+| `flash_attention_2` | CUDA + `flash_attn` package + `fp16` or `bf16` | Lowest latency on CUDA. Falls back to `sdpa` automatically if requirements are not met. Not available for the `serve` command (CPU-only). |
+| `eager` | None | PyTorch native attention loops. Slowest; use only for debugging. |
+
+With `attn_implementation="auto"`, the service selects `flash_attention_2` when all requirements are satisfied (CUDA device, `flash_attn` installed, `fp16`/`bf16` dtype), and `sdpa` otherwise.
+
+To pin the backend:
+
+```python
+service = NanoTTSService(
+    device="cuda",
+    dtype="bfloat16",
+    attn_implementation="flash_attention_2",
+)
+```
+
+## Preloading and warmup
+
+For server deployments, call `preload()` and `warmup()` at startup so the first real request is not slowed by model loading and JIT compilation.
+
+```python
+# Load model weights into memory and verify voice preset paths
+info = service.preload(voices=["Junhao", "Ava"], load_model=True)
+print(info["device"])                    # e.g. 'cuda'
+print(info["configured_attn_implementation"])  # e.g. 'flash_attention_2'
+
+# Run a short synthesis to warm up CUDA kernels and KV cache
+service.warmup(text="你好，欢迎使用 Nano-TTS。", voice="Junhao")
+```
+
+<Tip>
+Place the `preload()` and `warmup()` calls in your application's startup handler (e.g. FastAPI's `lifespan` context or a `startup` event). This ensures the first user request is served at full speed rather than absorbing the cold-start penalty.
+</Tip>
+
+`warmup()` runs a short synthesis with `do_sample=False` and `max_new_frames=96`, which is fast enough to not noticeably delay startup but sufficient to initialize all CUDA kernels.
+
+## Thread safety
+
+<Note>
+`NanoTTSService` uses a `threading.RLock` (`self._lock`) to serialise access to the model and audio tokenizer. Only one inference call runs at a time. If multiple threads call `synthesize()` concurrently, they will queue up. This is intentional: the model is not re-entrant, and running concurrent inferences would produce incorrect audio.
+
+For high-concurrency applications, consider running multiple service instances across separate processes (e.g. with `multiprocessing` or a process manager like Gunicorn with multiple workers), each with their own model copy.
+</Note>
+
+## Serving from a local model directory
+
+If you have downloaded the weights locally (e.g. via `huggingface-cli download`), pass the local paths directly:
+
+```python
+service = NanoTTSService(
+    checkpoint_path="/models/MOSS-TTS-Nano",
+    audio_tokenizer_path="/models/MOSS-Audio-Tokenizer-Nano",
+)
+```
+
+Or via CLI:
+
+```bash
+moss-tts-nano serve \
+  --checkpoint /models/MOSS-TTS-Nano \
+  --audio-tokenizer /models/MOSS-Audio-Tokenizer-Nano
+```
+
+The service automatically detects whether the path is local (using `Path.exists()`) and sets `local_files_only=True` on `from_pretrained()` calls to skip network checks.
